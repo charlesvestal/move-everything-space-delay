@@ -1,0 +1,33 @@
+{
+    "name": "Space Echo Dub",
+    "version": 1,
+    "chain": {
+        "input": "both",
+        "synth": {
+            "module": "sf2",
+            "config": {
+                "preset": 0
+            }
+        },
+        "audio_fx": [
+            {
+                "type": "spacecho",
+                "params": {
+                    "time": 0.6,
+                    "feedback": 0.7,
+                    "mix": 0.5,
+                    "tone": 0.3,
+                    "saturation": 0.4
+                }
+            }
+        ],
+        "knob_mappings": [
+            {"cc": 71, "target": "synth", "param": "preset"},
+            {"cc": 72, "target": "fx1", "param": "time"},
+            {"cc": 73, "target": "fx1", "param": "feedback"},
+            {"cc": 74, "target": "fx1", "param": "mix"},
+            {"cc": 75, "target": "fx1", "param": "tone"},
+            {"cc": 76, "target": "fx1", "param": "saturation"}
+        ]
+    }
+}

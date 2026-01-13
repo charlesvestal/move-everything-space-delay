@@ -1,50 +1,187 @@
 /*
- * Space Echo Audio FX Plugin
+ * Space Echo Audio FX Plugin - Tape Delay
  *
- * RE-201 style tape delay with:
- * - Time: Delay time from 50ms to 800ms
- * - Feedback: Echo repeats with soft saturation (max 95%)
- * - Mix: Dry/wet blend
- * - Tone: High-frequency rolloff on repeats (1kHz to 8kHz)
- * - Flutter: Tape wow/flutter pitch modulation (~5Hz LFO)
+ * Based on https://github.com/cyrusasfa/TapeDelay
+ * Simple, clean tape delay with linear interpolation and smooth parameter ramping
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 
 #include "audio_fx_api_v1.h"
 
-#define SAMPLE_RATE 44100
+#define SAMPLE_RATE 44100.0f
+#define MAX_DELAY_SECONDS 2.0f
 
-/* Delay line size: ~800ms at 44100Hz plus some margin for flutter */
-#define DELAY_SIZE 36000
+/* ============================================================================
+ * SMOOTHED VALUE - For click-free parameter changes
+ * ============================================================================ */
 
-/* Plugin state */
+typedef struct {
+    float currentValue;
+    float targetValue;
+    float step;
+    int stepsRemaining;
+} SmoothedValue;
+
+static void SmoothedValue_Init(SmoothedValue *sv, float initialValue) {
+    sv->currentValue = initialValue;
+    sv->targetValue = initialValue;
+    sv->step = 0.0f;
+    sv->stepsRemaining = 0;
+}
+
+static void SmoothedValue_SetTarget(SmoothedValue *sv, float newTarget, int rampSamples) {
+    sv->targetValue = newTarget;
+    if (rampSamples > 0) {
+        sv->step = (newTarget - sv->currentValue) / (float)rampSamples;
+        sv->stepsRemaining = rampSamples;
+    } else {
+        sv->currentValue = newTarget;
+        sv->step = 0.0f;
+        sv->stepsRemaining = 0;
+    }
+}
+
+static float SmoothedValue_GetNext(SmoothedValue *sv) {
+    if (sv->stepsRemaining > 0) {
+        sv->currentValue += sv->step;
+        sv->stepsRemaining--;
+        if (sv->stepsRemaining == 0) {
+            sv->currentValue = sv->targetValue;
+        }
+    }
+    return sv->currentValue;
+}
+
+/* ============================================================================
+ * DELAY LINE - Circular buffer with linear interpolation
+ * ============================================================================ */
+
+typedef struct {
+    float *buffer;
+    int bufferLength;
+    int writePosition;
+    float sampleRate;
+} DelayLine;
+
+static void DelayLine_Init(DelayLine *dl, float sampleRate) {
+    dl->sampleRate = sampleRate;
+    dl->bufferLength = (int)(MAX_DELAY_SECONDS * sampleRate);
+    dl->buffer = (float *)calloc(dl->bufferLength, sizeof(float));
+    dl->writePosition = 0;
+}
+
+static void DelayLine_Free(DelayLine *dl) {
+    if (dl->buffer) {
+        free(dl->buffer);
+        dl->buffer = NULL;
+    }
+}
+
+static void DelayLine_Clear(DelayLine *dl) {
+    memset(dl->buffer, 0, dl->bufferLength * sizeof(float));
+}
+
+static void DelayLine_Write(DelayLine *dl, float sample) {
+    dl->buffer[dl->writePosition] = sample;
+    dl->writePosition++;
+    if (dl->writePosition >= dl->bufferLength) {
+        dl->writePosition = 0;
+    }
+}
+
+static float DelayLine_Read(DelayLine *dl, float delayTimeSeconds) {
+    /* Calculate read position with fractional sample */
+    float delaySamples = delayTimeSeconds * dl->sampleRate;
+
+    /* Clamp delay to valid range */
+    if (delaySamples < 1.0f) delaySamples = 1.0f;
+    if (delaySamples > dl->bufferLength - 1) delaySamples = dl->bufferLength - 1;
+
+    float readPos = (float)dl->writePosition - delaySamples;
+    if (readPos < 0) readPos += dl->bufferLength;
+
+    /* Linear interpolation */
+    float fraction = readPos - floorf(readPos);
+    int index0 = (int)floorf(readPos);
+    int index1 = (index0 + 1) % dl->bufferLength;
+
+    float sample0 = dl->buffer[index0];
+    float sample1 = dl->buffer[index1];
+
+    return sample0 + fraction * (sample1 - sample0);
+}
+
+/* ============================================================================
+ * SIMPLE ONE-POLE FILTER - For tone control
+ * ============================================================================ */
+
+typedef struct {
+    float z1;
+    float a0;
+    float b1;
+} OnePoleFilter;
+
+static void OnePoleFilter_Init(OnePoleFilter *f) {
+    f->z1 = 0.0f;
+    f->a0 = 1.0f;
+    f->b1 = 0.0f;
+}
+
+static void OnePoleFilter_SetCutoff(OnePoleFilter *f, float cutoffHz, float sampleRate) {
+    float w = 2.0f * 3.14159265f * cutoffHz / sampleRate;
+    f->b1 = expf(-w);
+    f->a0 = 1.0f - f->b1;
+}
+
+static float OnePoleFilter_Process(OnePoleFilter *f, float input) {
+    f->z1 = input * f->a0 + f->z1 * f->b1;
+    return f->z1;
+}
+
+/* ============================================================================
+ * SOFT SATURATION - Gentle tape-style saturation
+ * ============================================================================ */
+
+static float SoftSaturate(float x, float amount) {
+    if (amount <= 0.0f) return x;
+
+    /* Soft clipping using tanh */
+    float drive = 1.0f + amount * 3.0f;
+    return tanhf(x * drive) / drive;
+}
+
+/* ============================================================================
+ * PLUGIN STATE
+ * ============================================================================ */
+
+#define MAX_CHANNELS 2
+
+static DelayLine g_delayLine[MAX_CHANNELS];
+static OnePoleFilter g_toneFilter[MAX_CHANNELS];
+static SmoothedValue g_smoothedDelayTime;
+static SmoothedValue g_smoothedFeedback;
+static SmoothedValue g_smoothedMix;
+static SmoothedValue g_smoothedTone;
+
+/* Parameters */
+static float g_param_time = 0.3f;       /* 0-1 maps to 0.01-2.0 seconds */
+static float g_param_feedback = 0.4f;   /* 0-1 maps to 0-0.95 */
+static float g_param_mix = 0.5f;        /* 0-1 dry/wet */
+static float g_param_tone = 0.5f;       /* 0-1 dark to bright */
+static float g_param_saturation = 0.0f; /* 0-1 saturation amount */
+
 static const host_api_v1_t *g_host = NULL;
 static audio_fx_api_v1_t g_fx_api;
+static int g_initialized = 0;
 
-/* Parameters (0.0 to 1.0) */
-static float g_time = 0.4f;      /* Delay time: 50ms to 800ms */
-static float g_feedback = 0.4f;  /* Feedback amount (max 95%) */
-static float g_mix = 0.35f;      /* Dry/wet mix */
-static float g_tone = 0.6f;      /* Tone filter: 1kHz to 8kHz */
-static float g_flutter = 0.15f;  /* Flutter depth: 0 to ~2ms */
+/* Ramp time in samples (~50ms at 44.1kHz for smooth changes) */
+#define RAMP_SAMPLES 2205
 
-/* Delay line (stereo) */
-static float g_delay_l[DELAY_SIZE];
-static float g_delay_r[DELAY_SIZE];
-static int g_write_idx = 0;
-
-/* Tone filter state (one-pole lowpass on feedback path) */
-static float g_filter_l = 0.0f;
-static float g_filter_r = 0.0f;
-
-/* Flutter LFO state */
-static float g_lfo_phase = 0.0f;
-
-/* Logging helper */
 static void fx_log(const char *msg) {
     if (g_host && g_host->log) {
         char buf[256];
@@ -53,170 +190,150 @@ static void fx_log(const char *msg) {
     }
 }
 
-/* Linear interpolation for fractional delay read */
-static inline float delay_read_interp(float *delay, int write_idx, float delay_samples) {
-    /* Calculate fractional read position */
-    float read_pos = (float)write_idx - delay_samples;
-
-    /* Wrap to buffer bounds */
-    while (read_pos < 0.0f) read_pos += DELAY_SIZE;
-    while (read_pos >= DELAY_SIZE) read_pos -= DELAY_SIZE;
-
-    /* Integer and fractional parts */
-    int i0 = (int)read_pos;
-    int i1 = i0 + 1;
-    if (i1 >= DELAY_SIZE) i1 = 0;
-
-    float frac = read_pos - (float)i0;
-
-    /* Linear interpolation */
-    return delay[i0] * (1.0f - frac) + delay[i1] * frac;
+/* Convert normalized parameters to actual values */
+static float GetDelayTimeSeconds(float normalized) {
+    /* 0-1 maps to 0.02-2.0 seconds (exponential for better feel) */
+    return 0.02f + normalized * normalized * 1.98f;
 }
 
-/* === Audio FX API Implementation === */
+static float GetFeedback(float normalized) {
+    /* 0-1 maps to 0-0.95 */
+    return normalized * 0.95f;
+}
+
+static float GetToneFrequency(float normalized) {
+    /* 0-1 maps to 500Hz-12000Hz (exponential) */
+    return 500.0f * powf(24.0f, normalized);
+}
+
+/* ============================================================================
+ * AUDIO FX API IMPLEMENTATION
+ * ============================================================================ */
 
 static int fx_on_load(const char *module_dir, const char *config_json) {
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Space Echo loading from: %s", module_dir);
-    fx_log(msg);
+    fx_log("Space Echo loading...");
 
-    /* Clear delay lines */
-    memset(g_delay_l, 0, sizeof(g_delay_l));
-    memset(g_delay_r, 0, sizeof(g_delay_r));
-    g_write_idx = 0;
+    /* Initialize delay lines */
+    for (int ch = 0; ch < MAX_CHANNELS; ch++) {
+        DelayLine_Init(&g_delayLine[ch], SAMPLE_RATE);
+        OnePoleFilter_Init(&g_toneFilter[ch]);
+        OnePoleFilter_SetCutoff(&g_toneFilter[ch], GetToneFrequency(g_param_tone), SAMPLE_RATE);
+    }
 
-    /* Reset filter state */
-    g_filter_l = 0.0f;
-    g_filter_r = 0.0f;
+    /* Initialize smoothed values */
+    SmoothedValue_Init(&g_smoothedDelayTime, GetDelayTimeSeconds(g_param_time));
+    SmoothedValue_Init(&g_smoothedFeedback, GetFeedback(g_param_feedback));
+    SmoothedValue_Init(&g_smoothedMix, g_param_mix);
+    SmoothedValue_Init(&g_smoothedTone, g_param_tone);
 
-    /* Reset LFO phase */
-    g_lfo_phase = 0.0f;
-
+    g_initialized = 1;
     fx_log("Space Echo initialized");
     return 0;
 }
 
 static void fx_on_unload(void) {
-    fx_log("Space Echo unloading");
+    fx_log("Space Echo unloading...");
+    if (g_initialized) {
+        for (int ch = 0; ch < MAX_CHANNELS; ch++) {
+            DelayLine_Free(&g_delayLine[ch]);
+        }
+        g_initialized = 0;
+    }
 }
 
 static void fx_process_block(int16_t *audio_inout, int frames) {
-    const float dt = 1.0f / SAMPLE_RATE;
-
-    /* Calculate delay time in samples */
-    /* time=0 -> 50ms (2205 samples), time=1 -> 800ms (35280 samples) */
-    float delay_ms = 50.0f + g_time * 750.0f;
-    float base_delay_samples = delay_ms * (SAMPLE_RATE / 1000.0f);
-
-    /* Flutter LFO parameters (~5Hz) */
-    const float lfo_freq = 5.0f;
-    /* Flutter depth: 0 to ~2ms (88 samples at 44100Hz) */
-    float flutter_depth = g_flutter * 88.0f;
-
-    /* Tone filter coefficient */
-    /* Cutoff from 1kHz (tone=0) to 8kHz (tone=1) */
-    float freq = 1000.0f + g_tone * 7000.0f;
-    float rc = 1.0f / (2.0f * M_PI * freq);
-    float alpha = dt / (rc + dt);
-
-    /* Feedback amount (max 95% to prevent runaway) */
-    float feedback = g_feedback * 0.95f;
+    if (!g_initialized) return;
 
     for (int i = 0; i < frames; i++) {
-        /* Convert input to float (-1.0 to 1.0) */
-        float in_l = audio_inout[i * 2] / 32768.0f;
-        float in_r = audio_inout[i * 2 + 1] / 32768.0f;
+        /* Get smoothed parameter values (same for both channels) */
+        float delayTime = SmoothedValue_GetNext(&g_smoothedDelayTime);
+        float feedback = SmoothedValue_GetNext(&g_smoothedFeedback);
+        float mix = SmoothedValue_GetNext(&g_smoothedMix);
 
-        /* Calculate flutter modulation */
-        float flutter_mod = sinf(g_lfo_phase * 2.0f * M_PI) * flutter_depth;
+        for (int ch = 0; ch < 2; ch++) {
+            /* Convert input to float */
+            float in = audio_inout[i * 2 + ch] / 32768.0f;
 
-        /* Update LFO phase */
-        g_lfo_phase += lfo_freq * dt;
-        if (g_lfo_phase >= 1.0f) g_lfo_phase -= 1.0f;
+            /* Read from delay line */
+            float delayed = DelayLine_Read(&g_delayLine[ch], delayTime);
 
-        /* Calculate modulated delay time */
-        float delay_samples = base_delay_samples + flutter_mod;
+            /* Apply tone filter to delayed signal */
+            delayed = OnePoleFilter_Process(&g_toneFilter[ch], delayed);
 
-        /* Clamp delay to valid range */
-        if (delay_samples < 1.0f) delay_samples = 1.0f;
-        if (delay_samples > DELAY_SIZE - 2) delay_samples = DELAY_SIZE - 2;
+            /* Apply soft saturation to feedback path */
+            float saturated = SoftSaturate(delayed, g_param_saturation);
 
-        /* Read from delay line with interpolation */
-        float delayed_l = delay_read_interp(g_delay_l, g_write_idx, delay_samples);
-        float delayed_r = delay_read_interp(g_delay_r, g_write_idx, delay_samples);
+            /* Write input + feedback to delay line */
+            DelayLine_Write(&g_delayLine[ch], in + saturated * feedback);
 
-        /* Apply tone filter to delayed signal (simulates tape high-freq loss) */
-        g_filter_l = g_filter_l + alpha * (delayed_l - g_filter_l);
-        g_filter_r = g_filter_r + alpha * (delayed_r - g_filter_r);
+            /* Mix dry/wet */
+            float out = in * (1.0f - mix) + delayed * mix;
 
-        float filtered_l = g_filter_l;
-        float filtered_r = g_filter_r;
+            /* Soft clip output to prevent harsh clipping */
+            if (out > 1.0f) out = 1.0f;
+            if (out < -1.0f) out = -1.0f;
 
-        /* Mix dry and wet signals */
-        float out_l = in_l * (1.0f - g_mix) + filtered_l * g_mix;
-        float out_r = in_r * (1.0f - g_mix) + filtered_r * g_mix;
-
-        /* Calculate feedback signal with soft saturation (tape compression) */
-        float fb_l = tanhf(filtered_l * feedback * 1.2f);
-        float fb_r = tanhf(filtered_r * feedback * 1.2f);
-
-        /* Write to delay line: input + saturated feedback */
-        g_delay_l[g_write_idx] = in_l + fb_l;
-        g_delay_r[g_write_idx] = in_r + fb_r;
-
-        /* Advance write position */
-        g_write_idx++;
-        if (g_write_idx >= DELAY_SIZE) g_write_idx = 0;
-
-        /* Clamp output and convert back to int16 */
-        if (out_l > 1.0f) out_l = 1.0f;
-        if (out_l < -1.0f) out_l = -1.0f;
-        if (out_r > 1.0f) out_r = 1.0f;
-        if (out_r < -1.0f) out_r = -1.0f;
-
-        audio_inout[i * 2] = (int16_t)(out_l * 32767.0f);
-        audio_inout[i * 2 + 1] = (int16_t)(out_r * 32767.0f);
+            /* Convert back to int16 */
+            audio_inout[i * 2 + ch] = (int16_t)(out * 32767.0f);
+        }
     }
 }
 
 static void fx_set_param(const char *key, const char *val) {
     float v = atof(val);
 
-    /* Clamp to 0.0-1.0 range */
+    /* Clamp to 0-1 range */
     if (v < 0.0f) v = 0.0f;
     if (v > 1.0f) v = 1.0f;
 
     if (strcmp(key, "time") == 0) {
-        g_time = v;
-    } else if (strcmp(key, "feedback") == 0) {
-        g_feedback = v;
-    } else if (strcmp(key, "mix") == 0) {
-        g_mix = v;
-    } else if (strcmp(key, "tone") == 0) {
-        g_tone = v;
-    } else if (strcmp(key, "flutter") == 0) {
-        g_flutter = v;
+        g_param_time = v;
+        SmoothedValue_SetTarget(&g_smoothedDelayTime, GetDelayTimeSeconds(v), RAMP_SAMPLES);
+    }
+    else if (strcmp(key, "feedback") == 0) {
+        g_param_feedback = v;
+        SmoothedValue_SetTarget(&g_smoothedFeedback, GetFeedback(v), RAMP_SAMPLES);
+    }
+    else if (strcmp(key, "mix") == 0) {
+        g_param_mix = v;
+        SmoothedValue_SetTarget(&g_smoothedMix, v, RAMP_SAMPLES);
+    }
+    else if (strcmp(key, "tone") == 0) {
+        g_param_tone = v;
+        for (int ch = 0; ch < MAX_CHANNELS; ch++) {
+            OnePoleFilter_SetCutoff(&g_toneFilter[ch], GetToneFrequency(v), SAMPLE_RATE);
+        }
+    }
+    else if (strcmp(key, "saturation") == 0) {
+        g_param_saturation = v;
     }
 }
 
 static int fx_get_param(const char *key, char *buf, int buf_len) {
     if (strcmp(key, "time") == 0) {
-        return snprintf(buf, buf_len, "%.2f", g_time);
-    } else if (strcmp(key, "feedback") == 0) {
-        return snprintf(buf, buf_len, "%.2f", g_feedback);
-    } else if (strcmp(key, "mix") == 0) {
-        return snprintf(buf, buf_len, "%.2f", g_mix);
-    } else if (strcmp(key, "tone") == 0) {
-        return snprintf(buf, buf_len, "%.2f", g_tone);
-    } else if (strcmp(key, "flutter") == 0) {
-        return snprintf(buf, buf_len, "%.2f", g_flutter);
-    } else if (strcmp(key, "name") == 0) {
+        return snprintf(buf, buf_len, "%.2f", g_param_time);
+    }
+    else if (strcmp(key, "feedback") == 0) {
+        return snprintf(buf, buf_len, "%.2f", g_param_feedback);
+    }
+    else if (strcmp(key, "mix") == 0) {
+        return snprintf(buf, buf_len, "%.2f", g_param_mix);
+    }
+    else if (strcmp(key, "tone") == 0) {
+        return snprintf(buf, buf_len, "%.2f", g_param_tone);
+    }
+    else if (strcmp(key, "saturation") == 0) {
+        return snprintf(buf, buf_len, "%.2f", g_param_saturation);
+    }
+    else if (strcmp(key, "name") == 0) {
         return snprintf(buf, buf_len, "Space Echo");
     }
     return -1;
 }
 
-/* === Entry Point === */
+/* ============================================================================
+ * ENTRY POINT
+ * ============================================================================ */
 
 audio_fx_api_v1_t* move_audio_fx_init_v1(const host_api_v1_t *host) {
     g_host = host;
@@ -230,6 +347,5 @@ audio_fx_api_v1_t* move_audio_fx_init_v1(const host_api_v1_t *host) {
     g_fx_api.get_param = fx_get_param;
 
     fx_log("Space Echo plugin initialized");
-
     return &g_fx_api;
 }

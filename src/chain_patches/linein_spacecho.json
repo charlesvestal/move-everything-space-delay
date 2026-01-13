@@ -1,0 +1,27 @@
+{
+    "name": "Line In + Space Echo",
+    "version": 1,
+    "chain": {
+        "input": "line_in",
+        "synth": null,
+        "audio_fx": [
+            {
+                "type": "spacecho",
+                "params": {
+                    "time": 0.5,
+                    "feedback": 0.5,
+                    "mix": 0.4,
+                    "tone": 0.5,
+                    "saturation": 0.2
+                }
+            }
+        ],
+        "knob_mappings": [
+            {"cc": 71, "target": "fx1", "param": "time"},
+            {"cc": 72, "target": "fx1", "param": "feedback"},
+            {"cc": 73, "target": "fx1", "param": "mix"},
+            {"cc": 74, "target": "fx1", "param": "tone"},
+            {"cc": 75, "target": "fx1", "param": "saturation"}
+        ]
+    }
+}
