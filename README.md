@@ -1,4 +1,4 @@
-# Move Anything Delay (Space Echo)
+# Move Anything Space Delay
 
 RE-201 style tape delay audio effect module for Move Anything.
 
