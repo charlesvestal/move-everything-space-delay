@@ -14,7 +14,7 @@
       {"key": "feedback", "name": "Feedback", "type": "float", "min": 0.0, "max": 1.0, "default": 0.4, "step": 0.05},
       {"key": "mix", "name": "Mix", "type": "float", "min": 0.0, "max": 1.0, "default": 0.35, "step": 0.05},
       {"key": "tone", "name": "Tone", "type": "float", "min": 0.0, "max": 1.0, "default": 0.6, "step": 0.05},
-      {"key": "flutter", "name": "Flutter", "type": "float", "min": 0.0, "max": 1.0, "default": 0.15, "step": 0.05}
+      {"key": "saturation", "name": "Saturation", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.05}
     ]
   }
 }

@@ -2,13 +2,32 @@
 
 RE-201 style tape delay audio effect module for Move Anything.
 
+## Prerequisites
+
+- [Move Anything](https://github.com/charlesvestal/move-anything) installed on your Ableton Move
+
+## Installation
+
+### Via Module Store (Recommended)
+
+1. Launch Move Anything on your Move
+2. Select **Module Store** from the main menu
+3. Navigate to **Audio FX** → **Space Echo**
+4. Select **Install**
+
+### Manual Installation
+
+```bash
+./scripts/install.sh
+```
+
 ## Features
 
-- **Time**: Delay time from 50ms to 800ms
-- **Feedback**: Echo repeats with gentle saturation
+- **Time**: Delay time from 20ms to 2 seconds
+- **Feedback**: Echo repeats (0-95%)
 - **Mix**: Dry/wet blend
-- **Tone**: High-frequency rolloff on repeats (tape simulation)
-- **Flutter**: Tape wow/flutter pitch modulation
+- **Tone**: Lowpass filter on repeats (500Hz to 12kHz)
+- **Saturation**: Soft tape-style saturation on feedback
 
 ## Building
 
@@ -28,7 +47,15 @@ Input ---+-------------------------------- Dry ----+
                    +--- Saturation <-- Feedback <--+
 ```
 
-## Installation
+## Module ID
+
+**Note:** This module's ID is `spacecho` (not `space-delay`). When creating Signal Chain patches, reference it as:
+
+```json
+{ "type": "spacecho", "params": { "time": 0.5, "feedback": 0.4 } }
+```
+
+## Installation Path
 
 The module installs to `/data/UserData/move-anything/modules/chain/audio_fx/spacecho/`
 
