@@ -64,9 +64,15 @@ cat src/module.json > dist/spacecho/module.json
 cat build/spacecho.so > dist/spacecho/spacecho.so
 chmod +x dist/spacecho/spacecho.so
 
+# Create tarball for release
+cd dist
+tar -czvf spacecho-module.tar.gz spacecho/
+cd ..
+
 echo ""
 echo "=== Build Complete ==="
 echo "Output: dist/spacecho/"
+echo "Tarball: dist/spacecho-module.tar.gz"
 echo ""
 echo "To install on Move:"
 echo "  ./scripts/install.sh"
