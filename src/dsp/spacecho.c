@@ -349,3 +349,219 @@ audio_fx_api_v1_t* move_audio_fx_init_v1(const host_api_v1_t *host) {
     fx_log("Space Echo plugin initialized");
     return &g_fx_api;
 }
+
+/* ============================================================================
+ * V2 API - Instance-based
+ * ============================================================================ */
+
+#define AUDIO_FX_API_VERSION_2 2
+#define AUDIO_FX_INIT_V2_SYMBOL "move_audio_fx_init_v2"
+
+typedef struct audio_fx_api_v2 {
+    uint32_t api_version;
+    void* (*create_instance)(const char *module_dir, const char *config_json);
+    void (*destroy_instance)(void *instance);
+    void (*process_block)(void *instance, int16_t *audio_inout, int frames);
+    void (*set_param)(void *instance, const char *key, const char *val);
+    int (*get_param)(void *instance, const char *key, char *buf, int buf_len);
+} audio_fx_api_v2_t;
+
+typedef audio_fx_api_v2_t* (*audio_fx_init_v2_fn)(const host_api_v1_t *host);
+
+/* Instance structure for v2 API */
+typedef struct {
+    char module_dir[256];
+
+    /* Delay lines and filters */
+    DelayLine delayLine[MAX_CHANNELS];
+    OnePoleFilter toneFilter[MAX_CHANNELS];
+
+    /* Smoothed values */
+    SmoothedValue smoothedDelayTime;
+    SmoothedValue smoothedFeedback;
+    SmoothedValue smoothedMix;
+    SmoothedValue smoothedTone;
+
+    /* Parameters */
+    float param_time;
+    float param_feedback;
+    float param_mix;
+    float param_tone;
+    float param_saturation;
+
+    int initialized;
+} spacecho_instance_t;
+
+static void v2_log(const char *msg) {
+    if (g_host && g_host->log) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "[spacecho-v2] %s", msg);
+        g_host->log(buf);
+    }
+}
+
+static void* v2_create_instance(const char *module_dir, const char *config_json) {
+    v2_log("Creating instance");
+
+    spacecho_instance_t *inst = (spacecho_instance_t*)calloc(1, sizeof(spacecho_instance_t));
+    if (!inst) {
+        v2_log("Failed to allocate instance");
+        return NULL;
+    }
+
+    if (module_dir) {
+        strncpy(inst->module_dir, module_dir, sizeof(inst->module_dir) - 1);
+    }
+
+    /* Set default parameters */
+    inst->param_time = 0.3f;
+    inst->param_feedback = 0.4f;
+    inst->param_mix = 0.5f;
+    inst->param_tone = 0.5f;
+    inst->param_saturation = 0.0f;
+
+    /* Initialize delay lines */
+    for (int ch = 0; ch < MAX_CHANNELS; ch++) {
+        DelayLine_Init(&inst->delayLine[ch], SAMPLE_RATE);
+        OnePoleFilter_Init(&inst->toneFilter[ch]);
+        OnePoleFilter_SetCutoff(&inst->toneFilter[ch], GetToneFrequency(inst->param_tone), SAMPLE_RATE);
+    }
+
+    /* Initialize smoothed values */
+    SmoothedValue_Init(&inst->smoothedDelayTime, GetDelayTimeSeconds(inst->param_time));
+    SmoothedValue_Init(&inst->smoothedFeedback, GetFeedback(inst->param_feedback));
+    SmoothedValue_Init(&inst->smoothedMix, inst->param_mix);
+    SmoothedValue_Init(&inst->smoothedTone, inst->param_tone);
+
+    inst->initialized = 1;
+    v2_log("Instance created");
+    return inst;
+}
+
+static void v2_destroy_instance(void *instance) {
+    spacecho_instance_t *inst = (spacecho_instance_t*)instance;
+    if (!inst) return;
+
+    v2_log("Destroying instance");
+
+    if (inst->initialized) {
+        for (int ch = 0; ch < MAX_CHANNELS; ch++) {
+            DelayLine_Free(&inst->delayLine[ch]);
+        }
+    }
+
+    free(inst);
+}
+
+static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
+    spacecho_instance_t *inst = (spacecho_instance_t*)instance;
+    if (!inst || !inst->initialized) return;
+
+    for (int i = 0; i < frames; i++) {
+        /* Get smoothed parameter values */
+        float delayTime = SmoothedValue_GetNext(&inst->smoothedDelayTime);
+        float feedback = SmoothedValue_GetNext(&inst->smoothedFeedback);
+        float mix = SmoothedValue_GetNext(&inst->smoothedMix);
+
+        for (int ch = 0; ch < 2; ch++) {
+            /* Convert input to float */
+            float in = audio_inout[i * 2 + ch] / 32768.0f;
+
+            /* Read from delay line */
+            float delayed = DelayLine_Read(&inst->delayLine[ch], delayTime);
+
+            /* Apply tone filter to delayed signal */
+            delayed = OnePoleFilter_Process(&inst->toneFilter[ch], delayed);
+
+            /* Apply soft saturation to feedback path */
+            float saturated = SoftSaturate(delayed, inst->param_saturation);
+
+            /* Write input + feedback to delay line */
+            DelayLine_Write(&inst->delayLine[ch], in + saturated * feedback);
+
+            /* Mix dry/wet */
+            float out = in * (1.0f - mix) + delayed * mix;
+
+            /* Soft clip output */
+            if (out > 1.0f) out = 1.0f;
+            if (out < -1.0f) out = -1.0f;
+
+            /* Convert back to int16 */
+            audio_inout[i * 2 + ch] = (int16_t)(out * 32767.0f);
+        }
+    }
+}
+
+static void v2_set_param(void *instance, const char *key, const char *val) {
+    spacecho_instance_t *inst = (spacecho_instance_t*)instance;
+    if (!inst) return;
+
+    float v = atof(val);
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+
+    if (strcmp(key, "time") == 0) {
+        inst->param_time = v;
+        SmoothedValue_SetTarget(&inst->smoothedDelayTime, GetDelayTimeSeconds(v), RAMP_SAMPLES);
+    }
+    else if (strcmp(key, "feedback") == 0) {
+        inst->param_feedback = v;
+        SmoothedValue_SetTarget(&inst->smoothedFeedback, GetFeedback(v), RAMP_SAMPLES);
+    }
+    else if (strcmp(key, "mix") == 0) {
+        inst->param_mix = v;
+        SmoothedValue_SetTarget(&inst->smoothedMix, v, RAMP_SAMPLES);
+    }
+    else if (strcmp(key, "tone") == 0) {
+        inst->param_tone = v;
+        for (int ch = 0; ch < MAX_CHANNELS; ch++) {
+            OnePoleFilter_SetCutoff(&inst->toneFilter[ch], GetToneFrequency(v), SAMPLE_RATE);
+        }
+    }
+    else if (strcmp(key, "saturation") == 0) {
+        inst->param_saturation = v;
+    }
+}
+
+static int v2_get_param(void *instance, const char *key, char *buf, int buf_len) {
+    spacecho_instance_t *inst = (spacecho_instance_t*)instance;
+    if (!inst) return -1;
+
+    if (strcmp(key, "time") == 0) {
+        return snprintf(buf, buf_len, "%.2f", inst->param_time);
+    }
+    else if (strcmp(key, "feedback") == 0) {
+        return snprintf(buf, buf_len, "%.2f", inst->param_feedback);
+    }
+    else if (strcmp(key, "mix") == 0) {
+        return snprintf(buf, buf_len, "%.2f", inst->param_mix);
+    }
+    else if (strcmp(key, "tone") == 0) {
+        return snprintf(buf, buf_len, "%.2f", inst->param_tone);
+    }
+    else if (strcmp(key, "saturation") == 0) {
+        return snprintf(buf, buf_len, "%.2f", inst->param_saturation);
+    }
+    else if (strcmp(key, "name") == 0) {
+        return snprintf(buf, buf_len, "Space Echo");
+    }
+    return -1;
+}
+
+static audio_fx_api_v2_t g_fx_api_v2;
+
+audio_fx_api_v2_t* move_audio_fx_init_v2(const host_api_v1_t *host) {
+    g_host = host;
+
+    memset(&g_fx_api_v2, 0, sizeof(g_fx_api_v2));
+    g_fx_api_v2.api_version = AUDIO_FX_API_VERSION_2;
+    g_fx_api_v2.create_instance = v2_create_instance;
+    g_fx_api_v2.destroy_instance = v2_destroy_instance;
+    g_fx_api_v2.process_block = v2_process_block;
+    g_fx_api_v2.set_param = v2_set_param;
+    g_fx_api_v2.get_param = v2_get_param;
+
+    v2_log("Space Echo v2 plugin initialized");
+
+    return &g_fx_api_v2;
+}

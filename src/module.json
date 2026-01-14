@@ -1,11 +1,11 @@
 {
   "id": "spacecho",
   "name": "Space Echo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "RE-201 style tape delay",
   "author": "Charles Vestal",
   "dsp": "spacecho.so",
-  "api_version": 1,
+  "api_version": 2,
   "capabilities": {
     "chainable": true,
     "component_type": "audio_fx",
