@@ -1,7 +1,7 @@
 {
   "id": "spacecho",
   "name": "Space Echo",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "RE-201 style tape delay",
   "author": "Charles Vestal",
   "dsp": "spacecho.so",
