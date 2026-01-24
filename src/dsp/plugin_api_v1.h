@@ -93,6 +93,13 @@ typedef struct plugin_api_v1 {
      */
     int (*get_param)(const char *key, char *buf, int buf_len);
 
+    /* Get error message if module is in error state
+     * buf: output buffer
+     * buf_len: size of output buffer
+     * Returns: length written, or 0 if no error
+     */
+    int (*get_error)(char *buf, int buf_len);
+
     /* Audio rendering */
 
     /* Render one block of audio
@@ -113,5 +120,43 @@ typedef struct plugin_api_v1 {
 typedef plugin_api_v1_t* (*move_plugin_init_v1_fn)(const host_api_v1_t *host);
 
 #define MOVE_PLUGIN_INIT_SYMBOL "move_plugin_init_v1"
+
+/*
+ * Plugin API v2 - Instance-based API for multi-instance support
+ *
+ * v2 plugins return an instance pointer from create_instance() and all
+ * subsequent calls pass that instance pointer. This allows multiple
+ * instances of the same plugin to coexist with independent state.
+ *
+ * Plugins can export BOTH v1 and v2 symbols during migration.
+ * Hosts should prefer v2 when available.
+ */
+
+#define MOVE_PLUGIN_API_VERSION_2 2
+
+typedef struct plugin_api_v2 {
+    uint32_t api_version;
+
+    /* Create instance - returns opaque instance pointer, or NULL on failure
+     * module_dir: path to module directory
+     * json_defaults: JSON string from module.json "defaults" section, or NULL
+     */
+    void* (*create_instance)(const char *module_dir, const char *json_defaults);
+
+    /* Destroy instance - clean up and free instance */
+    void (*destroy_instance)(void *instance);
+
+    /* All callbacks take instance as first parameter */
+    void (*on_midi)(void *instance, const uint8_t *msg, int len, int source);
+    void (*set_param)(void *instance, const char *key, const char *val);
+    int (*get_param)(void *instance, const char *key, char *buf, int buf_len);
+    int (*get_error)(void *instance, char *buf, int buf_len);
+    void (*render_block)(void *instance, int16_t *out_interleaved_lr, int frames);
+
+} plugin_api_v2_t;
+
+typedef plugin_api_v2_t* (*move_plugin_init_v2_fn)(const host_api_v1_t *host);
+
+#define MOVE_PLUGIN_INIT_V2_SYMBOL "move_plugin_init_v2"
 
 #endif /* MOVE_PLUGIN_API_V1_H */
