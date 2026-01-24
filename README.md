@@ -1,6 +1,6 @@
-# Move Anything Space Delay
+# Move Anything TapeDelay
 
-RE-201 style tape delay audio effect module for Move Anything.
+Tape delay audio effect module for Move Anything.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ RE-201 style tape delay audio effect module for Move Anything.
 
 1. Launch Move Anything on your Move
 2. Select **Module Store** from the main menu
-3. Navigate to **Audio FX** → **Space Echo**
+3. Navigate to **Audio FX** → **TapeDelay**
 4. Select **Install**
 
 ### Manual Installation
@@ -49,21 +49,21 @@ Input ---+-------------------------------- Dry ----+
 
 ## Module ID
 
-**Note:** This module's ID is `spacecho` (not `space-delay`). When creating Signal Chain patches, reference it as:
+**Note:** This module's ID is `tapedelay`. When creating Signal Chain patches, reference it as:
 
 ```json
-{ "type": "spacecho", "params": { "time": 0.5, "feedback": 0.4 } }
+{ "type": "tapedelay", "params": { "time": 0.5, "feedback": 0.4 } }
 ```
 
 ## Installation Path
 
-The module installs to `/data/UserData/move-anything/modules/chain/audio_fx/spacecho/`
+The module installs to `/data/UserData/move-anything/modules/audio_fx/tapedelay/`
 
 ## Credits
 
 Based on [TapeDelay](https://github.com/cyrusasfa/TapeDelay) by Cyrus Afsary.
 
-Inspired by the [Roland RE-201 Space Echo](https://www.roland.com/global/promos/space_echo_history/) tape delay unit (1974).
+Inspired by classic tape echo units.
 
 ## License
 

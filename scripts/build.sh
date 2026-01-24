@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Space Echo module for Move Anything (ARM64)
+# Build TapeDelay module for Move Anything (ARM64)
 #
 # Automatically uses Docker for cross-compilation if needed.
 # Set CROSS_PREFIX to skip Docker (e.g., for native ARM builds).
@@ -11,7 +11,7 @@ IMAGE_NAME="move-anything-builder"
 
 # Check if we need Docker
 if [ -z "$CROSS_PREFIX" ] && [ ! -f "/.dockerenv" ]; then
-    echo "=== Space Echo Module Build (via Docker) ==="
+    echo "=== TapeDelay Module Build (via Docker) ==="
     echo ""
 
     # Build Docker image if needed
@@ -40,12 +40,12 @@ CROSS_PREFIX="${CROSS_PREFIX:-aarch64-linux-gnu-}"
 
 cd "$REPO_ROOT"
 
-echo "=== Building Space Echo Module ==="
+echo "=== Building TapeDelay Module ==="
 echo "Cross prefix: $CROSS_PREFIX"
 
 # Create build directories
 mkdir -p build
-mkdir -p dist/spacecho
+mkdir -p dist/tapedelay
 
 # Compile DSP plugin (with aggressive optimizations for CM4)
 echo "Compiling DSP plugin..."
@@ -54,25 +54,25 @@ ${CROSS_PREFIX}gcc -Ofast -shared -fPIC \
     -fomit-frame-pointer -fno-stack-protector \
     -DNDEBUG \
     src/dsp/spacecho.c \
-    -o build/spacecho.so \
+    -o build/tapedelay.so \
     -Isrc/dsp \
     -lm
 
 # Copy files to dist (use cat to avoid ExtFS deallocation issues with Docker)
 echo "Packaging..."
-cat src/module.json > dist/spacecho/module.json
-cat build/spacecho.so > dist/spacecho/spacecho.so
-chmod +x dist/spacecho/spacecho.so
+cat src/module.json > dist/tapedelay/module.json
+cat build/tapedelay.so > dist/tapedelay/tapedelay.so
+chmod +x dist/tapedelay/tapedelay.so
 
 # Create tarball for release
 cd dist
-tar -czvf spacecho-module.tar.gz spacecho/
+tar -czvf tapedelay-module.tar.gz tapedelay/
 cd ..
 
 echo ""
 echo "=== Build Complete ==="
-echo "Output: dist/spacecho/"
-echo "Tarball: dist/spacecho-module.tar.gz"
+echo "Output: dist/tapedelay/"
+echo "Tarball: dist/tapedelay-module.tar.gz"
 echo ""
 echo "To install on Move:"
 echo "  ./scripts/install.sh"

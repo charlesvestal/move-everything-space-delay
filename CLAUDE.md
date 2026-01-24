@@ -4,7 +4,7 @@ Instructions for Claude Code when working with this repository.
 
 ## Project Overview
 
-Space Echo is an audio effect module for Move Anything that provides RE-201 style tape delay with flutter, tone filtering, and soft saturation.
+TapeDelay is an audio effect module for Move Anything that provides tape delay with flutter, tone filtering, and soft saturation.
 
 ## Architecture
 
@@ -51,7 +51,7 @@ Input ---+-------------------------------- Dry ----+
 
 Module declares `"chainable": true` and `"component_type": "audio_fx"` in module.json.
 
-Installs to: `/data/UserData/move-anything/modules/chain/audio_fx/spacecho/`
+Installs to: `/data/UserData/move-anything/modules/audio_fx/tapedelay/`
 
 ## Build Commands
 

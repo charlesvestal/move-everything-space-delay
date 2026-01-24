@@ -1,5 +1,5 @@
 /*
- * Space Echo Audio FX Plugin - Tape Delay
+ * TapeDelay Audio FX Plugin - Tape Delay
  *
  * Based on https://github.com/cyrusasfa/TapeDelay
  * Simple, clean tape delay with linear interpolation and smooth parameter ramping
@@ -165,7 +165,7 @@ static const host_api_v1_t *g_host = NULL;
 static void plugin_log(const char *msg) {
     if (g_host && g_host->log) {
         char buf[256];
-        snprintf(buf, sizeof(buf), "[spacecho] %s", msg);
+        snprintf(buf, sizeof(buf), "[tapedelay] %s", msg);
         g_host->log(buf);
     }
 }
@@ -369,7 +369,7 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
         return snprintf(buf, buf_len, "%.2f", inst->param_saturation);
     }
     else if (strcmp(key, "name") == 0) {
-        return snprintf(buf, buf_len, "Space Echo");
+        return snprintf(buf, buf_len, "TapeDelay");
     }
 
     /* UI hierarchy for shadow parameter editor */

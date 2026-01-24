@@ -1,12 +1,12 @@
 {
-  "id": "spacecho",
-  "name": "Space Echo",
-  "abbrev": "SE",
+  "id": "tapedelay",
+  "name": "TapeDelay",
+  "abbrev": "TD",
   "version": "0.3.1",
-  "description": "RE-201 style tape delay",
+  "description": "Tape delay with flutter, tone shaping, and saturation",
   "author": "Charles Vestal",
   "license": "MIT",
-  "dsp": "spacecho.so",
+  "dsp": "tapedelay.so",
   "api_version": 2,
   "capabilities": {
     "chainable": true,
@@ -14,7 +14,7 @@
     "ui_hierarchy": {
       "levels": {
         "root": {
-          "name": "Space Echo",
+          "name": "TapeDelay",
           "params": ["time", "feedback", "mix", "tone", "saturation"],
           "knobs": ["time", "feedback", "mix", "tone", "saturation"]
         }
