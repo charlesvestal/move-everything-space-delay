@@ -214,6 +214,7 @@ typedef struct {
     SmoothedValue smoothedFeedback;
     SmoothedValue smoothedMix;
     SmoothedValue smoothedTone;
+    SmoothedValue smoothedSaturation;
 
     /* Parameters */
     float param_time;
@@ -258,6 +259,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     SmoothedValue_Init(&inst->smoothedFeedback, GetFeedback(inst->param_feedback));
     SmoothedValue_Init(&inst->smoothedMix, inst->param_mix);
     SmoothedValue_Init(&inst->smoothedTone, inst->param_tone);
+    SmoothedValue_Init(&inst->smoothedSaturation, inst->param_saturation);
 
     inst->initialized = 1;
     plugin_log("Instance created");
@@ -288,6 +290,7 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         float delayTime = SmoothedValue_GetNext(&inst->smoothedDelayTime);
         float feedback = SmoothedValue_GetNext(&inst->smoothedFeedback);
         float mix = SmoothedValue_GetNext(&inst->smoothedMix);
+        float saturation = SmoothedValue_GetNext(&inst->smoothedSaturation);
 
         for (int ch = 0; ch < 2; ch++) {
             /* Convert input to float */
@@ -299,11 +302,10 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
             /* Apply tone filter to delayed signal */
             delayed = OnePoleFilter_Process(&inst->toneFilter[ch], delayed);
 
-            /* Apply soft saturation to feedback path */
-            float saturated = SoftSaturate(delayed, inst->param_saturation);
-
-            /* Write input + feedback to delay line */
-            DelayLine_Write(&inst->delayLine[ch], in + saturated * feedback);
+            /* Tape-style saturation on the record path (input + feedback) */
+            float write = in + delayed * feedback;
+            float saturated = SoftSaturate(write, saturation);
+            DelayLine_Write(&inst->delayLine[ch], saturated);
 
             /* Mix dry/wet */
             float out = in * (1.0f - mix) + delayed * mix;
@@ -346,6 +348,7 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     }
     else if (strcmp(key, "saturation") == 0) {
         inst->param_saturation = v;
+        SmoothedValue_SetTarget(&inst->smoothedSaturation, v, RAMP_SAMPLES);
     }
 }
 

@@ -2,7 +2,7 @@
   "id": "tapedelay",
   "name": "TapeDelay",
   "abbrev": "TD",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Tape delay with flutter, tone shaping, and saturation",
   "author": "Charles Vestal",
   "license": "MIT",
