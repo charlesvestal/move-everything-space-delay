@@ -4,7 +4,7 @@
   "abbrev": "TD",
   "version": "0.3.5",
   "description": "Tape delay with flutter and tone shaping",
-  "author": "Charles Vestal",
+  "author": "cyrusasfa (port: charlesvestal)",
   "license": "MIT",
   "dsp": "tapedelay.so",
   "api_version": 2,
