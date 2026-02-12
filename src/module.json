@@ -15,7 +15,48 @@
       "levels": {
         "root": {
           "name": "TapeDelay",
-          "params": ["time", "feedback", "mix", "tone"],
+          "params": [
+            {
+              "key": "time",
+              "label": "Time",
+              "type": "int",
+              "min": 20,
+              "max": 2000,
+              "default": 400,
+              "step": 10,
+              "unit": "ms"
+            },
+            {
+              "key": "feedback",
+              "label": "Feedback",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "default": 0.4,
+              "step": 0.01,
+              "unit": "%"
+            },
+            {
+              "key": "mix",
+              "label": "Mix",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "default": 0.35,
+              "step": 0.01,
+              "unit": "%"
+            },
+            {
+              "key": "tone",
+              "label": "Tone",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "default": 0.6,
+              "step": 0.01,
+              "unit": "%"
+            }
+          ],
           "knobs": ["time", "feedback", "mix", "tone"]
         }
       }
