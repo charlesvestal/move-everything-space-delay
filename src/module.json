@@ -2,7 +2,7 @@
   "id": "tapedelay",
   "name": "TapeDelay",
   "abbrev": "TD",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "Tape delay with flutter and tone shaping",
   "author": "cyrusasfa (port: charlesvestal)",
   "license": "MIT",
@@ -62,7 +62,7 @@
               "type": "int",
               "min": 0,
               "max": 100,
-              "default": 100,
+              "default": 0,
               "step": 1,
               "unit": "%"
             }

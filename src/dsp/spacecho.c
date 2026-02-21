@@ -210,6 +210,7 @@ typedef struct {
     SmoothedValue smoothedFeedback;
     SmoothedValue smoothedMix;
     SmoothedValue smoothedTone;
+    SmoothedValue smoothedStereoWidth;
 
     /* Parameters */
     int param_time;        /* milliseconds (20-2000) */
@@ -240,7 +241,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     inst->param_feedback = 0.4f;
     inst->param_mix = 0.5f;
     inst->param_tone = 0.5f;
-    inst->param_stereo_width = 100;
+    inst->param_stereo_width = 0;
 
     /* Initialize delay lines */
     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
@@ -254,6 +255,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     SmoothedValue_Init(&inst->smoothedFeedback, GetFeedback(inst->param_feedback));
     SmoothedValue_Init(&inst->smoothedMix, inst->param_mix);
     SmoothedValue_Init(&inst->smoothedTone, inst->param_tone);
+    SmoothedValue_Init(&inst->smoothedStereoWidth, GetStereoWidth(inst->param_stereo_width));
 
     inst->initialized = 1;
     plugin_log("Instance created");
@@ -284,7 +286,7 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         float delayTime = SmoothedValue_GetNext(&inst->smoothedDelayTime);
         float feedback = SmoothedValue_GetNext(&inst->smoothedFeedback);
         float mix = SmoothedValue_GetNext(&inst->smoothedMix);
-        float stereoWidth = GetStereoWidth(inst->param_stereo_width);
+        float stereoWidth = SmoothedValue_GetNext(&inst->smoothedStereoWidth);
 
         /* Convert input to float */
         float inL = audio_inout[i * 2] / 32768.0f;
@@ -298,14 +300,27 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         delayedL = OnePoleFilter_Process(&inst->toneFilter[0], delayedL);
         delayedR = OnePoleFilter_Process(&inst->toneFilter[1], delayedR);
 
-        /* Ping-pong: input and feedback bounce between channels */
-        DelayLine_Write(&inst->delayLine[0], inR + delayedR * feedback);
-        DelayLine_Write(&inst->delayLine[1], inL + delayedL * feedback);
+        /*
+         * Width-dependent ping-pong input routing:
+         * - width=0.0: original crossfeed behavior (preserves previous mono-width level)
+         * - width=1.0: mono-seeded ping-pong (centered mono input still alternates L/R)
+         */
+        float monoInput = 0.5f * (inL + inR);
+        float pingInputL = inR * (1.0f - stereoWidth);
+        float pingInputR = inL * (1.0f - stereoWidth) + monoInput * stereoWidth;
+        DelayLine_Write(&inst->delayLine[0], pingInputL + delayedR * feedback);
+        DelayLine_Write(&inst->delayLine[1], pingInputR + delayedL * feedback);
 
         /* Stereo width on wet path: 0 = mono, 1 = full L/R */
         float wetMono = 0.5f * (delayedL + delayedR);
         float wetL = wetMono + (delayedL - wetMono) * stereoWidth;
         float wetR = wetMono + (delayedR - wetMono) * stereoWidth;
+
+        /* Keep perceived wet level more stable while widening. */
+        float widthLevelComp = 1.0f / sqrtf(1.0f - 0.5f * stereoWidth);
+        if (widthLevelComp > 1.333333f) widthLevelComp = 1.333333f;
+        wetL *= widthLevelComp;
+        wetR *= widthLevelComp;
 
         /* Mix dry/wet */
         float outL = inL * (1.0f - mix) + wetL * mix;
@@ -369,6 +384,7 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
             if (width < 0) width = 0;
             if (width > 100) width = 100;
             inst->param_stereo_width = width;
+            SmoothedValue_SetTarget(&inst->smoothedStereoWidth, GetStereoWidth(width), RAMP_SAMPLES);
         }
         return;
     }
@@ -387,6 +403,7 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         if (width < 0) width = 0;
         if (width > 100) width = 100;
         inst->param_stereo_width = width;
+        SmoothedValue_SetTarget(&inst->smoothedStereoWidth, GetStereoWidth(width), RAMP_SAMPLES);
         return;
     }
 
