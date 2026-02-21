@@ -2,7 +2,7 @@
   "id": "tapedelay",
   "name": "TapeDelay",
   "abbrev": "TD",
-  "version": "0.3.7",
+  "version": "0.3.9",
   "description": "Tape delay with flutter and tone shaping",
   "author": "cyrusasfa (port: charlesvestal)",
   "license": "MIT",
@@ -55,13 +55,24 @@
               "default": 0.6,
               "step": 0.01,
               "unit": "%"
+            },
+            {
+              "key": "stereo_width",
+              "label": "Stereo Width",
+              "type": "int",
+              "min": 0,
+              "max": 100,
+              "default": 100,
+              "step": 1,
+              "unit": "%"
             }
           ],
           "knobs": [
             "time",
             "feedback",
             "mix",
-            "tone"
+            "tone",
+            "stereo_width"
           ]
         }
       }

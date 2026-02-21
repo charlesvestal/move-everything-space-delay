@@ -27,6 +27,7 @@ Tape delay audio effect module for Move Everything.
 - **Feedback**: Echo repeats (0-95%)
 - **Mix**: Dry/wet blend
 - **Tone**: Lowpass filter on repeats (500Hz to 12kHz)
+- **Stereo Width**: 0 = mono ping-pong repeats, 100 = full L/R ping-pong
 
 ## Building
 

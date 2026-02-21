@@ -176,6 +176,12 @@ static float GetToneFrequency(float normalized) {
     return 500.0f * powf(24.0f, normalized);
 }
 
+static float GetStereoWidth(int percent) {
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    return (float)percent / 100.0f;
+}
+
 /* ============================================================================
  * V2 API - Instance-based
  * ============================================================================ */
@@ -210,6 +216,7 @@ typedef struct {
     float param_feedback;
     float param_mix;
     float param_tone;
+    int param_stereo_width; /* percent (0=mono, 100=full L/R) */
 
     int initialized;
 } spacecho_instance_t;
@@ -233,6 +240,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     inst->param_feedback = 0.4f;
     inst->param_mix = 0.5f;
     inst->param_tone = 0.5f;
+    inst->param_stereo_width = 100;
 
     /* Initialize delay lines */
     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
@@ -276,30 +284,42 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
         float delayTime = SmoothedValue_GetNext(&inst->smoothedDelayTime);
         float feedback = SmoothedValue_GetNext(&inst->smoothedFeedback);
         float mix = SmoothedValue_GetNext(&inst->smoothedMix);
+        float stereoWidth = GetStereoWidth(inst->param_stereo_width);
 
-        for (int ch = 0; ch < 2; ch++) {
-            /* Convert input to float */
-            float in = audio_inout[i * 2 + ch] / 32768.0f;
+        /* Convert input to float */
+        float inL = audio_inout[i * 2] / 32768.0f;
+        float inR = audio_inout[i * 2 + 1] / 32768.0f;
 
-            /* Read from delay line */
-            float delayed = DelayLine_Read(&inst->delayLine[ch], delayTime);
+        /* Read from delay lines */
+        float delayedL = DelayLine_Read(&inst->delayLine[0], delayTime);
+        float delayedR = DelayLine_Read(&inst->delayLine[1], delayTime);
 
-            /* Apply tone filter to delayed signal */
-            delayed = OnePoleFilter_Process(&inst->toneFilter[ch], delayed);
+        /* Apply tone filter to delayed signal */
+        delayedL = OnePoleFilter_Process(&inst->toneFilter[0], delayedL);
+        delayedR = OnePoleFilter_Process(&inst->toneFilter[1], delayedR);
 
-            /* Write input + feedback to delay line */
-            DelayLine_Write(&inst->delayLine[ch], in + delayed * feedback);
+        /* Ping-pong: input and feedback bounce between channels */
+        DelayLine_Write(&inst->delayLine[0], inR + delayedR * feedback);
+        DelayLine_Write(&inst->delayLine[1], inL + delayedL * feedback);
 
-            /* Mix dry/wet */
-            float out = in * (1.0f - mix) + delayed * mix;
+        /* Stereo width on wet path: 0 = mono, 1 = full L/R */
+        float wetMono = 0.5f * (delayedL + delayedR);
+        float wetL = wetMono + (delayedL - wetMono) * stereoWidth;
+        float wetR = wetMono + (delayedR - wetMono) * stereoWidth;
 
-            /* Soft clip output */
-            if (out > 1.0f) out = 1.0f;
-            if (out < -1.0f) out = -1.0f;
+        /* Mix dry/wet */
+        float outL = inL * (1.0f - mix) + wetL * mix;
+        float outR = inR * (1.0f - mix) + wetR * mix;
 
-            /* Convert back to int16 */
-            audio_inout[i * 2 + ch] = (int16_t)(out * 32767.0f);
-        }
+        /* Soft clip output */
+        if (outL > 1.0f) outL = 1.0f;
+        if (outL < -1.0f) outL = -1.0f;
+        if (outR > 1.0f) outR = 1.0f;
+        if (outR < -1.0f) outR = -1.0f;
+
+        /* Convert back to int16 */
+        audio_inout[i * 2] = (int16_t)(outL * 32767.0f);
+        audio_inout[i * 2 + 1] = (int16_t)(outR * 32767.0f);
     }
 }
 
@@ -344,6 +364,12 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
                 OnePoleFilter_SetCutoff(&inst->toneFilter[ch], GetToneFrequency(v), SAMPLE_RATE);
             }
         }
+        if (json_get_number(val, "stereo_width", &v) == 0) {
+            int width = (int)v;
+            if (width < 0) width = 0;
+            if (width > 100) width = 100;
+            inst->param_stereo_width = width;
+        }
         return;
     }
 
@@ -353,6 +379,14 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         if (ms > 2000) ms = 2000;
         inst->param_time = ms;
         SmoothedValue_SetTarget(&inst->smoothedDelayTime, GetDelayTimeSeconds(ms), RAMP_SAMPLES);
+        return;
+    }
+
+    if (strcmp(key, "stereo_width") == 0 || strcmp(key, "width") == 0) {
+        int width = atoi(val);
+        if (width < 0) width = 0;
+        if (width > 100) width = 100;
+        inst->param_stereo_width = width;
         return;
     }
 
@@ -395,13 +429,16 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     else if (strcmp(key, "tone") == 0) {
         return snprintf(buf, buf_len, "%.2f", inst->param_tone);
     }
+    else if (strcmp(key, "stereo_width") == 0 || strcmp(key, "width") == 0) {
+        return snprintf(buf, buf_len, "%d", inst->param_stereo_width);
+    }
     else if (strcmp(key, "name") == 0) {
         return snprintf(buf, buf_len, "TapeDelay");
     }
     else if (strcmp(key, "state") == 0) {
         return snprintf(buf, buf_len,
-            "{\"time\":%d,\"feedback\":%.4f,\"mix\":%.4f,\"tone\":%.4f}",
-            inst->param_time, inst->param_feedback, inst->param_mix, inst->param_tone);
+            "{\"time\":%d,\"feedback\":%.4f,\"mix\":%.4f,\"tone\":%.4f,\"stereo_width\":%d}",
+            inst->param_time, inst->param_feedback, inst->param_mix, inst->param_tone, inst->param_stereo_width);
     }
 
     /* UI hierarchy for shadow parameter editor */
@@ -411,8 +448,8 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "\"levels\":{"
                 "\"root\":{"
                     "\"children\":null,"
-                    "\"knobs\":[\"time\",\"feedback\",\"mix\",\"tone\"],"
-                    "\"params\":[\"time\",\"feedback\",\"mix\",\"tone\"]"
+                    "\"knobs\":[\"time\",\"feedback\",\"mix\",\"tone\",\"stereo_width\"],"
+                    "\"params\":[\"time\",\"feedback\",\"mix\",\"tone\",\"stereo_width\"]"
                 "}"
             "}"
         "}";
@@ -430,7 +467,8 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "{\"key\":\"time\",\"name\":\"Time\",\"type\":\"int\",\"min\":20,\"max\":2000,\"step\":10},"
             "{\"key\":\"feedback\",\"name\":\"Feedback\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
             "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
-            "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01}"
+            "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
+            "{\"key\":\"stereo_width\",\"name\":\"Stereo Width\",\"type\":\"int\",\"min\":0,\"max\":100,\"step\":1}"
         "]";
         int len = strlen(params_json);
         if (len < buf_len) {
