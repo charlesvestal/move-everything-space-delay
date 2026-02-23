@@ -291,11 +291,8 @@ typedef struct {
     int param_bpm;         /* detected BPM from MIDI clock (40-300) */
 
     /* MIDI clock detection */
-    int clock_sample_counter;  /* samples since last 0xF8 */
-    int clock_tick_count;      /* counts 0xF8 messages */
-    int clock_interval_sum;    /* sum of last N intervals in samples */
-    int clock_intervals[CLOCKS_PER_QUARTER]; /* ring buffer of intervals */
-    int clock_interval_idx;
+    int clock_sample_counter;  /* samples accumulated over current quarter note */
+    int clock_tick_count;      /* counts 0xF8 ticks within current quarter note */
     int clock_running;         /* received enough ticks to derive BPM */
 
     int initialized;
@@ -444,46 +441,40 @@ static void spacecho_on_midi(void *instance, const uint8_t *msg, int len, int so
     uint8_t status = msg[0];
 
     if (status == 0xF8) {
-        /* Timing clock tick - 24 per quarter note */
-        if (inst->clock_tick_count > 0) {
-            int interval = inst->clock_sample_counter;
-            /* Store in ring buffer */
-            int idx = inst->clock_interval_idx % CLOCKS_PER_QUARTER;
-            inst->clock_interval_sum -= inst->clock_intervals[idx];
-            inst->clock_intervals[idx] = interval;
-            inst->clock_interval_sum += interval;
-            inst->clock_interval_idx++;
+        /* Timing clock tick - 24 per quarter note.
+         * MIDI clock is quantized to audio block boundaries (128 samples),
+         * so individual tick intervals jitter by ~3ms. We accumulate samples
+         * over a full quarter note (24 ticks) for one stable measurement,
+         * then lock the BPM and only update on significant tempo changes. */
+        inst->clock_tick_count++;
 
-            /* After 24 ticks we have a full quarter note measurement */
-            int filled = inst->clock_interval_idx;
-            if (filled > CLOCKS_PER_QUARTER) filled = CLOCKS_PER_QUARTER;
-            if (filled >= 6) {  /* need at least 6 ticks for reasonable estimate */
-                /* Average samples per tick * 24 = samples per quarter note */
-                float avg_interval = (float)inst->clock_interval_sum / (float)filled;
-                float samples_per_quarter = avg_interval * CLOCKS_PER_QUARTER;
-                float bpm = (SAMPLE_RATE * 60.0f) / samples_per_quarter;
-                int bpm_int = (int)(bpm + 0.5f);
-                if (bpm_int < 40) bpm_int = 40;
-                if (bpm_int > 300) bpm_int = 300;
-                if (bpm_int != inst->param_bpm) {
-                    inst->param_bpm = bpm_int;
-                    inst->clock_running = 1;
-                    /* Recompute synced time if division is active */
-                    if (inst->param_division != DIV_FREE) {
-                        apply_synced_time(inst);
-                    }
+        if (inst->clock_tick_count >= CLOCKS_PER_QUARTER) {
+            /* One full quarter note elapsed - measure BPM */
+            int total_samples = inst->clock_sample_counter;
+            float bpm = (SAMPLE_RATE * 60.0f) / (float)total_samples;
+            int bpm_int = (int)(bpm + 0.5f);
+            if (bpm_int < 40) bpm_int = 40;
+            if (bpm_int > 300) bpm_int = 300;
+
+            /* Only update if BPM changed significantly (>=3 BPM) */
+            if (!inst->clock_running || abs(bpm_int - inst->param_bpm) >= 3) {
+                inst->param_bpm = bpm_int;
+                inst->clock_running = 1;
+                /* Recompute synced delay time */
+                if (inst->param_division != DIV_FREE) {
+                    apply_synced_time(inst);
                 }
             }
+
+            /* Reset for next quarter note measurement */
+            inst->clock_tick_count = 0;
+            inst->clock_sample_counter = 0;
         }
-        inst->clock_tick_count++;
-        inst->clock_sample_counter = 0;
     }
     else if (status == 0xFA) {
         /* Start */
         inst->clock_tick_count = 0;
         inst->clock_sample_counter = 0;
-        inst->clock_interval_idx = 0;
-        inst->clock_interval_sum = 0;
         inst->clock_running = 1;
     }
     else if (status == 0xFC) {
