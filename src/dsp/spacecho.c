@@ -147,6 +147,7 @@ static float OnePoleFilter_Process(OnePoleFilter *f, float input) {
 
 #define MAX_CHANNELS 2
 #define RAMP_SAMPLES 2205
+#define CLOCKS_PER_QUARTER 24  /* MIDI standard: 24 PPQN */
 
 static const host_api_v1_t *g_host = NULL;
 
@@ -180,6 +181,74 @@ static float GetStereoWidth(int percent) {
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
     return (float)percent / 100.0f;
+}
+
+/* ============================================================================
+ * TEMPO SYNC - Musical division to delay time
+ * ============================================================================ */
+
+enum {
+    DIV_FREE = 0,
+    DIV_1_1,
+    DIV_1_2,
+    DIV_1_2D,
+    DIV_1_4,
+    DIV_1_4D,
+    DIV_1_4T,
+    DIV_1_8,
+    DIV_1_8D,
+    DIV_1_8T,
+    DIV_1_16,
+    DIV_1_16T,
+    DIV_COUNT
+};
+
+static const char *division_names[] = {
+    "free", "1/1", "1/2", "1/2d", "1/4", "1/4d", "1/4t",
+    "1/8", "1/8d", "1/8t", "1/16", "1/16t"
+};
+
+static const float division_multipliers[] = {
+    0.0f,      /* free - unused */
+    4.0f,      /* 1/1  = whole note */
+    2.0f,      /* 1/2  = half note */
+    3.0f,      /* 1/2d = dotted half */
+    1.0f,      /* 1/4  = quarter note */
+    1.5f,      /* 1/4d = dotted quarter */
+    0.66667f,  /* 1/4t = quarter triplet */
+    0.5f,      /* 1/8  = eighth note */
+    0.75f,     /* 1/8d = dotted eighth */
+    0.33333f,  /* 1/8t = eighth triplet */
+    0.25f,     /* 1/16 = sixteenth */
+    0.16667f   /* 1/16t = sixteenth triplet */
+};
+
+/* Parse enum value - handles both string label (from JS shadow UI) and integer index (from C chain_host) */
+static int parse_division(const char *val) {
+    /* Try string match first (labels like "1/4" would confuse strtof) */
+    for (int i = 0; i < DIV_COUNT; i++) {
+        if (strcmp(val, division_names[i]) == 0) return i;
+    }
+    /* Fall back to numeric index (C chain_host sends "0", "1", etc.) */
+    char *endptr;
+    long idx = strtol(val, &endptr, 10);
+    if (endptr != val && *endptr == '\0') {
+        if (idx < 0) idx = 0;
+        if (idx >= DIV_COUNT) idx = DIV_COUNT - 1;
+        return (int)idx;
+    }
+    return DIV_FREE;
+}
+
+/* Compute delay time in ms from BPM and division, clamped to 20-2000ms */
+static int compute_synced_time(int bpm, int division) {
+    if (division <= DIV_FREE || division >= DIV_COUNT) return -1;
+    float beat_ms = 60000.0f / (float)bpm;
+    float ms = division_multipliers[division] * beat_ms;
+    int result = (int)(ms + 0.5f);
+    if (result < 20) result = 20;
+    if (result > 2000) result = 2000;
+    return result;
 }
 
 /* ============================================================================
@@ -218,6 +287,16 @@ typedef struct {
     float param_mix;
     float param_tone;
     int param_stereo_width; /* percent (0=mono, 100=full L/R) */
+    int param_division;    /* DIV_FREE..DIV_16T */
+    int param_bpm;         /* detected BPM from MIDI clock (40-300) */
+
+    /* MIDI clock detection */
+    int clock_sample_counter;  /* samples since last 0xF8 */
+    int clock_tick_count;      /* counts 0xF8 messages */
+    int clock_interval_sum;    /* sum of last N intervals in samples */
+    int clock_intervals[CLOCKS_PER_QUARTER]; /* ring buffer of intervals */
+    int clock_interval_idx;
+    int clock_running;         /* received enough ticks to derive BPM */
 
     int initialized;
 } spacecho_instance_t;
@@ -242,6 +321,8 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
     inst->param_mix = 0.5f;
     inst->param_tone = 0.5f;
     inst->param_stereo_width = 0;
+    inst->param_division = DIV_FREE;
+    inst->param_bpm = 120;
 
     /* Initialize delay lines */
     for (int ch = 0; ch < MAX_CHANNELS; ch++) {
@@ -280,6 +361,9 @@ static void v2_destroy_instance(void *instance) {
 static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
     spacecho_instance_t *inst = (spacecho_instance_t*)instance;
     if (!inst || !inst->initialized) return;
+
+    /* Track samples for MIDI clock BPM detection */
+    inst->clock_sample_counter += frames;
 
     for (int i = 0; i < frames; i++) {
         /* Get smoothed parameter values */
@@ -339,6 +423,79 @@ static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
 }
 
 
+/* Apply synced delay time if division is active */
+static void apply_synced_time(spacecho_instance_t *inst) {
+    int ms = compute_synced_time(inst->param_bpm, inst->param_division);
+    if (ms > 0) {
+        inst->param_time = ms;
+        SmoothedValue_SetTarget(&inst->smoothedDelayTime, GetDelayTimeSeconds(ms), RAMP_SAMPLES);
+    }
+}
+
+/* ============================================================================
+ * MIDI CLOCK - BPM detection from 0xF8 timing messages
+ * ============================================================================ */
+
+static void spacecho_on_midi(void *instance, const uint8_t *msg, int len, int source) {
+    spacecho_instance_t *inst = (spacecho_instance_t*)instance;
+    if (!inst || len < 1) return;
+    (void)source;
+
+    uint8_t status = msg[0];
+
+    if (status == 0xF8) {
+        /* Timing clock tick - 24 per quarter note */
+        if (inst->clock_tick_count > 0) {
+            int interval = inst->clock_sample_counter;
+            /* Store in ring buffer */
+            int idx = inst->clock_interval_idx % CLOCKS_PER_QUARTER;
+            inst->clock_interval_sum -= inst->clock_intervals[idx];
+            inst->clock_intervals[idx] = interval;
+            inst->clock_interval_sum += interval;
+            inst->clock_interval_idx++;
+
+            /* After 24 ticks we have a full quarter note measurement */
+            int filled = inst->clock_interval_idx;
+            if (filled > CLOCKS_PER_QUARTER) filled = CLOCKS_PER_QUARTER;
+            if (filled >= 6) {  /* need at least 6 ticks for reasonable estimate */
+                /* Average samples per tick * 24 = samples per quarter note */
+                float avg_interval = (float)inst->clock_interval_sum / (float)filled;
+                float samples_per_quarter = avg_interval * CLOCKS_PER_QUARTER;
+                float bpm = (SAMPLE_RATE * 60.0f) / samples_per_quarter;
+                int bpm_int = (int)(bpm + 0.5f);
+                if (bpm_int < 40) bpm_int = 40;
+                if (bpm_int > 300) bpm_int = 300;
+                if (bpm_int != inst->param_bpm) {
+                    inst->param_bpm = bpm_int;
+                    inst->clock_running = 1;
+                    /* Recompute synced time if division is active */
+                    if (inst->param_division != DIV_FREE) {
+                        apply_synced_time(inst);
+                    }
+                }
+            }
+        }
+        inst->clock_tick_count++;
+        inst->clock_sample_counter = 0;
+    }
+    else if (status == 0xFA) {
+        /* Start */
+        inst->clock_tick_count = 0;
+        inst->clock_sample_counter = 0;
+        inst->clock_interval_idx = 0;
+        inst->clock_interval_sum = 0;
+        inst->clock_running = 1;
+    }
+    else if (status == 0xFC) {
+        /* Stop */
+        inst->clock_running = 0;
+    }
+    else if (status == 0xFB) {
+        /* Continue */
+        inst->clock_running = 1;
+    }
+}
+
 /* Helper to extract a JSON number value by key */
 static int json_get_number(const char *json, const char *key, float *out) {
     char search[64];
@@ -348,6 +505,21 @@ static int json_get_number(const char *json, const char *key, float *out) {
     pos += strlen(search);
     while (*pos == ' ') pos++;
     *out = (float)atof(pos);
+    return 0;
+}
+
+/* Helper to extract a JSON string value by key */
+static int json_get_string(const char *json, const char *key, char *out, int out_len) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":\"", key);
+    const char *pos = strstr(json, search);
+    if (!pos) return -1;
+    pos += strlen(search);
+    int i = 0;
+    while (*pos && *pos != '"' && i < out_len - 1) {
+        out[i++] = *pos++;
+    }
+    out[i] = '\0';
     return 0;
 }
 
@@ -386,6 +558,22 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
             inst->param_stereo_width = width;
             SmoothedValue_SetTarget(&inst->smoothedStereoWidth, GetStereoWidth(width), RAMP_SAMPLES);
         }
+        {
+            char div_str[16];
+            if (json_get_string(val, "division", div_str, sizeof(div_str)) == 0) {
+                inst->param_division = parse_division(div_str);
+            }
+        }
+        if (json_get_number(val, "bpm", &v) == 0) {
+            int bpm = (int)v;
+            if (bpm < 40) bpm = 40;
+            if (bpm > 300) bpm = 300;
+            inst->param_bpm = bpm;
+        }
+        /* If division is active, recompute time from restored bpm/division */
+        if (inst->param_division != DIV_FREE) {
+            apply_synced_time(inst);
+        }
         return;
     }
 
@@ -394,6 +582,7 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         if (ms < 20) ms = 20;
         if (ms > 2000) ms = 2000;
         inst->param_time = ms;
+        inst->param_division = DIV_FREE; /* manual override reverts sync */
         SmoothedValue_SetTarget(&inst->smoothedDelayTime, GetDelayTimeSeconds(ms), RAMP_SAMPLES);
         return;
     }
@@ -404,6 +593,14 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         if (width > 100) width = 100;
         inst->param_stereo_width = width;
         SmoothedValue_SetTarget(&inst->smoothedStereoWidth, GetStereoWidth(width), RAMP_SAMPLES);
+        return;
+    }
+
+    if (strcmp(key, "division") == 0) {
+        inst->param_division = parse_division(val);
+        if (inst->param_division != DIV_FREE) {
+            apply_synced_time(inst);
+        }
         return;
     }
 
@@ -449,13 +646,20 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     else if (strcmp(key, "stereo_width") == 0 || strcmp(key, "width") == 0) {
         return snprintf(buf, buf_len, "%d", inst->param_stereo_width);
     }
+    else if (strcmp(key, "division") == 0) {
+        return snprintf(buf, buf_len, "%s", division_names[inst->param_division]);
+    }
+    else if (strcmp(key, "bpm") == 0) {
+        return snprintf(buf, buf_len, "%d", inst->param_bpm);
+    }
     else if (strcmp(key, "name") == 0) {
         return snprintf(buf, buf_len, "TapeDelay");
     }
     else if (strcmp(key, "state") == 0) {
         return snprintf(buf, buf_len,
-            "{\"time\":%d,\"feedback\":%.4f,\"mix\":%.4f,\"tone\":%.4f,\"stereo_width\":%d}",
-            inst->param_time, inst->param_feedback, inst->param_mix, inst->param_tone, inst->param_stereo_width);
+            "{\"time\":%d,\"feedback\":%.4f,\"mix\":%.4f,\"tone\":%.4f,\"stereo_width\":%d,\"division\":\"%s\",\"bpm\":%d}",
+            inst->param_time, inst->param_feedback, inst->param_mix, inst->param_tone,
+            inst->param_stereo_width, division_names[inst->param_division], inst->param_bpm);
     }
 
     /* UI hierarchy for shadow parameter editor */
@@ -465,8 +669,8 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             "\"levels\":{"
                 "\"root\":{"
                     "\"children\":null,"
-                    "\"knobs\":[\"time\",\"feedback\",\"mix\",\"tone\",\"stereo_width\"],"
-                    "\"params\":[\"time\",\"feedback\",\"mix\",\"tone\",\"stereo_width\"]"
+                    "\"knobs\":[\"time\",\"division\",\"feedback\",\"mix\",\"tone\",\"stereo_width\"],"
+                    "\"params\":[\"time\",\"division\",\"feedback\",\"mix\",\"tone\",\"stereo_width\"]"
                 "}"
             "}"
         "}";
@@ -481,7 +685,8 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     /* Chain params metadata for shadow parameter editor */
     if (strcmp(key, "chain_params") == 0) {
         const char *params_json = "["
-            "{\"key\":\"time\",\"name\":\"Time\",\"type\":\"int\",\"min\":20,\"max\":2000,\"step\":10},"
+            "{\"key\":\"time\",\"name\":\"Time\",\"type\":\"int\",\"min\":20,\"max\":2000,\"step\":1},"
+            "{\"key\":\"division\",\"name\":\"Division\",\"type\":\"enum\",\"options\":[\"free\",\"1/1\",\"1/2\",\"1/2d\",\"1/4\",\"1/4d\",\"1/4t\",\"1/8\",\"1/8d\",\"1/8t\",\"1/16\",\"1/16t\"],\"default\":0},"
             "{\"key\":\"feedback\",\"name\":\"Feedback\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
             "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
             "{\"key\":\"tone\",\"name\":\"Tone\",\"type\":\"float\",\"min\":0,\"max\":1,\"step\":0.01},"
@@ -514,4 +719,12 @@ audio_fx_api_v2_t* move_audio_fx_init_v2(const host_api_v1_t *host) {
     plugin_log("V2 API initialized");
 
     return &g_fx_api_v2;
+}
+
+/*
+ * Standalone MIDI handler export - chain host discovers this via dlsym.
+ * Receives MIDI clock (0xF8) for tempo sync.
+ */
+void move_audio_fx_on_midi(void *instance, const uint8_t *msg, int len, int source) {
+    spacecho_on_midi(instance, msg, len, source);
 }

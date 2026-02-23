@@ -2,7 +2,7 @@
   "id": "tapedelay",
   "name": "TapeDelay",
   "abbrev": "TD",
-  "version": "0.3.10",
+  "version": "0.4.0",
   "description": "Tape delay with flutter and tone shaping",
   "author": "cyrusasfa (port: charlesvestal)",
   "license": "MIT",
@@ -23,8 +23,15 @@
               "min": 20,
               "max": 2000,
               "default": 400,
-              "step": 10,
+              "step": 1,
               "unit": "ms"
+            },
+            {
+              "key": "division",
+              "label": "Division",
+              "type": "enum",
+              "options": ["free", "1/1", "1/2", "1/2d", "1/4", "1/4d", "1/4t", "1/8", "1/8d", "1/8t", "1/16", "1/16t"],
+              "default": 0
             },
             {
               "key": "feedback",
@@ -69,6 +76,7 @@
           ],
           "knobs": [
             "time",
+            "division",
             "feedback",
             "mix",
             "tone",
