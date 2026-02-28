@@ -61,6 +61,7 @@ ${CROSS_PREFIX}gcc -Ofast -shared -fPIC \
 # Copy files to dist (use cat to avoid ExtFS deallocation issues with Docker)
 echo "Packaging..."
 cat src/module.json > dist/tapedelay/module.json
+[ -f src/help.json ] && cat src/help.json > dist/tapedelay/help.json
 cat build/tapedelay.so > dist/tapedelay/tapedelay.so
 chmod +x dist/tapedelay/tapedelay.so
 

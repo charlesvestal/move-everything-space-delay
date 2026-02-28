@@ -1,0 +1,44 @@
+{
+  "title": "TapeDelay",
+  "children": [
+    {
+      "title": "Overview",
+      "lines": [
+        "Tape delay with",
+        "flutter and tone",
+        "shaping.",
+        "",
+        "Vintage tape echo",
+        "with tempo sync,",
+        "ping-pong stereo,",
+        "and warm repeats."
+      ]
+    },
+    {
+      "title": "Controls",
+      "lines": [
+        "Knob 1: Time",
+        " Delay 20-2000ms",
+        "",
+        "Knob 2: Division",
+        " Tempo sync mode:",
+        " free, 1/1, 1/2,",
+        " 1/2d, 1/4, 1/4d,",
+        " 1/4t, 1/8, 1/8d,",
+        " 1/8t, 1/16, 1/16t",
+        "",
+        "Knob 3: Feedback",
+        " Echo repeats (0-100%)",
+        "",
+        "Knob 4: Mix",
+        " Dry/wet blend",
+        "",
+        "Knob 5: Tone",
+        " LP filter on repeats",
+        "",
+        "Knob 6: Stereo Width",
+        " 0=mono 100=ping-pong"
+      ]
+    }
+  ]
+}
