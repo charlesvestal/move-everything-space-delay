@@ -4,7 +4,7 @@ Tape delay audio effect module for Move Everything.
 
 ## Prerequisites
 
-- [Move Everything](https://github.com/charlesvestal/move-anything) installed on your Ableton Move
+- [Move Everything](https://github.com/charlesvestal/move-everything) installed on your Ableton Move
 
 ## Installation
 
