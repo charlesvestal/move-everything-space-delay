@@ -47,6 +47,27 @@ ping-pong width). The old parameter *names* are also accepted individually by
 `set_param`. Neither path keys on the module id, so both keep working now that
 the engine ships under the id the old one used.
 
+**Two of those mappings are measured, not reasoned.** Both were wrong in a way
+that only showed up by ear, and the fix in each case was to render an impulse
+through both engines and compare (`tools/README.md` has the how):
+
+- `feedback → intensity` was a flat `v * 0.75`, on the correct observation that
+  this engine sustains past ~0.75 and TapeDelay never did. But this loop also
+  carries record EQ, saturation and head losses, so the same nominal gain
+  decays faster — and proportionally worse the lower you go. The measured ratio
+  runs from **2.0** at feedback 0.1 to **0.72** at 0.95; the flat scale was
+  right at 0.80 and nowhere else. At the old default of 0.4 it asked for 0.30
+  where 0.44 is needed, so **every** imported patch came back a repeat or two
+  short. It is a calibration table now.
+- `mix → echo_volume` did not exist. TapeDelay's Mix was a crossfade, so the
+  wet/dry ratio it produced was `m/(1-m)`; this engine's Mix is a unity-overlap
+  law, so that ratio has to come from Echo Volume or the repeats arrive quiet.
+
+The one-at-a-time key path deliberately does **not** apply the echo-volume
+correction: `mix` is also this engine's own parameter name, so there is no way
+to distinguish an old module replaying its patch from a user turning the knob.
+A whole state blob is unambiguous; a single key is not.
+
 ## Build
 
 ```bash

@@ -42,6 +42,26 @@ The old parameter names (`time`, `feedback`, `tone`, `division`, `mix`,
 `stereo_width`) are still accepted as set_param keys for anything that replays
 them one at a time.
 
+A **fresh** insert lands there too. Since this module inherited TapeDelay's id,
+its defaults are not this engine's own — they are what TapeDelay's own startup
+state (time 400, feedback 0.4, mix 0.5, tone 0.5) becomes through that same
+import: mode H3 at 400 ms, Intensity 0.44, Echo Volume 1.0.
+`tools/loadtest.cpp` compares a new instance against the import path directly,
+so the two cannot drift apart.
+
+Measured against the old engine at its defaults, nothing set on either
+(`tools/ab_vs_tapedelay.cpp`):
+
+| | old TapeDelay | this |
+|---|---|---|
+| repeat #1 | 399.1 ms, −10.6 dB | 403.4 ms, −12.9 dB |
+| repeat #2 | 799.6 ms, −26.2 dB | 805.4 ms, −25.9 dB |
+| brightness | 2263 Hz | 2046 Hz |
+| program level | −0.63 dB | +0.40 dB |
+
+The first repeat is 2.3 dB down because Echo Volume is already at its ceiling;
+everything after it lands within half a dB.
+
 ## Remote panel
 
 A tape-deck style editor in the browser: draggable knobs, mode and rate-note

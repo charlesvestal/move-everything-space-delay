@@ -2,7 +2,7 @@
  "id": "tapedelay",
  "name": "Tape Echo 2",
  "abbrev": "TE2",
- "version": "1.3.3",
+ "version": "1.3.4",
  "description": "Component-modeled vintage three-head tape echo with spring reverb: 12 head/reverb modes, tape saturation, wow & flutter, tape age, tempo sync.",
  "author": "Tape Echo 2 by Dusk Audio (GPL-3.0); port: athousanddetails, charlesvestal",
  "dsp": "tapedelay.so",
@@ -35,7 +35,7 @@
      "H123R",
      "Rev"
     ],
-    "default": "H1"
+    "default": "H3"
    },
    {
     "key": "repeat_rate",
@@ -43,7 +43,7 @@
     "type": "float",
     "min": 0,
     "max": 1,
-    "default": 0
+    "default": 0.414888
    },
    {
     "key": "intensity",
@@ -51,7 +51,7 @@
     "type": "float",
     "min": 0,
     "max": 1,
-    "default": 0
+    "default": 0.44
    },
    {
     "key": "echo_volume",
@@ -59,7 +59,7 @@
     "type": "float",
     "min": 0,
     "max": 1,
-    "default": 0.5
+    "default": 1
    },
    {
     "key": "reverb_volume",

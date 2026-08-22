@@ -10,6 +10,7 @@
  * Run ON the Move for the realtime number; runs anywhere for correctness.
  */
 
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -252,6 +253,74 @@ int main(int argc, char **argv)
         CHECK(found >= 4 && flips >= found - 1,
               "every repeat swaps sides (%d repeats, %d alternations)", found, flips);
         fx->destroy_instance(shl);
+    }
+
+    /* -- A fresh instance IS an untouched TapeDelay ---------------------- */
+    /* This module inherited TapeDelay's id, so inserting it has to land
+     * where inserting that one landed. Rather than trust three hand-copied
+     * numbers in te2_params.h, drive the real import with the state
+     * TapeDelay's own create_instance produced and require a brand new
+     * instance to agree with it. Change the mapping and this fails; change
+     * the defaults away from the mapping and this fails. */
+    {
+        void *fresh = fx->create_instance(".", nullptr);
+        void *imported = fx->create_instance(".", nullptr);
+        CHECK(fresh && imported, "two instances for the defaults comparison");
+        if (fresh && imported) {
+            /* verbatim from TapeDelay v0.4.3 create_instance */
+            fx->set_param(imported, "state",
+                "{\"time\":400,\"feedback\":0.4000,\"mix\":0.5000,\"tone\":0.5000,"
+                "\"stereo_width\":0,\"division\":\"free\",\"bpm\":120}");
+
+            static const char *const kMapped[] = {
+                "mode", "repeat_rate", "intensity", "echo_volume", "mix", "treble",
+                "tempo_sync", "stereo_width", "ping_pong",
+            };
+            bool agree = true;
+            for (const char *k : kMapped) {
+                char a[128] = {0}, b[128] = {0};
+                fx->get_param(fresh, k, a, sizeof a);
+                fx->get_param(imported, k, b, sizeof b);
+                /* floats: compare numerically, the printf width is not the point */
+                const bool same = !strcmp(a, b)
+                    || (a[0] && b[0] && (isdigit((unsigned char)a[0]) || a[0] == '-')
+                        && fabs(atof(a) - atof(b)) < 1e-3);
+                if (!same) {
+                    printf("  defaults differ on %-14s fresh=%-10s imported=%s\n", k, a, b);
+                    agree = false;
+                }
+            }
+            CHECK(agree, "fresh defaults == an imported untouched TapeDelay");
+
+            /* and the one that matters by ear: measure it. A default insert
+             * must echo at TapeDelay's 400 ms, not this engine's 177 ms. */
+            char m[64] = {0};
+            fx->get_param(fresh, "mode", m, sizeof m);
+            CHECK(!strcmp(m, "H3"), "default mode is the head that reaches 400 ms (%s)", m);
+
+            fx->set_param(fresh, "intensity", "0");    /* one repeat to find */
+            fx->set_param(fresh, "echo_volume", "1.0");
+            fx->set_param(fresh, "mix", "1.0");        /* wet only */
+            for (int b = 0; b < 400; b++) {            /* settle the smoothers */
+                memset(io, 0, sizeof io);
+                fx->process_block(fresh, io, MOVE_FRAMES_PER_BLOCK);
+            }
+            double peak = 0; int at = -1;
+            for (int b = 0; b < 260; b++) {
+                memset(io, 0, sizeof io);
+                if (b == 0) io[0] = io[1] = 20000;
+                fx->process_block(fresh, io, MOVE_FRAMES_PER_BLOCK);
+                for (int i = 0; i < MOVE_FRAMES_PER_BLOCK; i++) {
+                    double a = fabs((double)io[i * 2]);
+                    if (a > peak) { peak = a; at = b * MOVE_FRAMES_PER_BLOCK + i; }
+                }
+            }
+            const double dms = at * 1000.0 / 44100.0;
+            CHECK(fabs(dms - 400.0) < 12.0,
+                  "default echo lands at TapeDelay's 400 ms (%.1f ms)", dms);
+        }
+        if (fresh) fx->destroy_instance(fresh);
+        if (imported) fx->destroy_instance(imported);
     }
 
     /* -- TapeDelay (schwung-space-delay) preset import ------------------ */
