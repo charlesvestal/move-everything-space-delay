@@ -78,11 +78,37 @@ static const char *const te2_opts_preset[13] = {
     "Spring Only",
 };
 
+/* Defaults for mode / repeat_rate / intensity / echo_volume are NOT this
+ * engine's own — they are what an untouched TapeDelay v0.4.3 becomes when its
+ * state is run through the legacy import in tape_echo_plugin.cpp. This module
+ * inherited that module's id, so a fresh insert has to land where the thing it
+ * replaced landed: a 400 ms echo with a few repeats, not a 177 ms slapback
+ * with none.
+ *
+ * TapeDelay's own create_instance came up at time=400, feedback=0.4, mix=0.5,
+ * tone=0.5, stereo_width=0, division=free. Note those are the values in its C,
+ * which is what you actually heard — its chain_params declared no defaults at
+ * all for the floats, and the "default" fields in its ui_hierarchy (mix 0.35,
+ * tone 0.6) were never applied to anything.
+ *
+ * 400 ms is out of head 1's reach (69.33..177.354 ms) and head 2's, so it
+ * lands on head 3 at 145.641 ms x 2.76118 = 400.000 ms.
+ *
+ * The two that are not obvious were measured against the old engine rather
+ * than reasoned about, by rendering an impulse through both and comparing the
+ * repeat trains: intensity 0.44 gives the same -12.1 dB per repeat as
+ * feedback 0.4 did, and echo_volume 1.0 restores the wet-to-dry ratio that the
+ * old crossfade Mix produced at 0.5. Both derivations live with the import
+ * functions. Together they are the difference between one repeat 22 dB down
+ * and the usable three-repeat echo TapeDelay actually had.
+ *
+ * tools/loadtest.cpp pins all four against the import path itself, so these
+ * cannot drift from the mapping they were derived from. */
 static const te2_param_t te2_params[TE2_PARAM_COUNT] = {
-    { "mode",           "Mode",          TE2_ENUM,  0,  11, 0,    te2_opts_mode,   12 },
-    { "repeat_rate",    "Repeat Rate",   TE2_FLOAT, 0,   1, 0.0f, 0, 0 },
-    { "intensity",      "Intensity",     TE2_FLOAT, 0,   1, 0.0f, 0, 0 },
-    { "echo_volume",    "Echo Volume",   TE2_FLOAT, 0,   1, 0.5f, 0, 0 },
+    { "mode",           "Mode",          TE2_ENUM,  0,  11, 2,    te2_opts_mode,   12 },
+    { "repeat_rate",    "Repeat Rate",   TE2_FLOAT, 0,   1, 0.414888f, 0, 0 },
+    { "intensity",      "Intensity",     TE2_FLOAT, 0,   1, 0.44f, 0, 0 },
+    { "echo_volume",    "Echo Volume",   TE2_FLOAT, 0,   1, 1.0f, 0, 0 },
     { "reverb_volume",  "Reverb Volume", TE2_FLOAT, 0,   1, 0.0f, 0, 0 },
     { "mix",            "Mix",           TE2_FLOAT, 0,   1, 0.5f, 0, 0 },
     { "tempo_sync",     "Tempo Sync",    TE2_ENUM,  0,   1, 0,    te2_opts_offon,  2 },

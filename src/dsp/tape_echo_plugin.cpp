@@ -178,13 +178,62 @@ static void te2_legacy_time(te2_instance *inst, float ms)
                   duskaudio::TapeEchoDSP::repeatRateForDelayMs(bestBase));
 }
 
-/* feedback -> intensity. TapeDelay's 0..1 is a loop gain of 0..0.95, which
- * always decays; Tape Echo self-oscillates past about 0.75. Scaling to that
- * threshold keeps a maxed-out old preset at the edge of runaway rather than
- * turning it into a siren on load. */
+/* feedback -> intensity, CALIBRATED BY DECAY RATE.
+ *
+ * This was `v * 0.75f`, on the reasoning that TapeDelay's 0..1 is a loop gain
+ * that always decays while Tape Echo self-oscillates past about 0.75. The
+ * ceiling is right — measured, this engine hits sustain at intensity ~0.74 —
+ * but a flat scale only lands at the top of the range. TapeDelay's feedback
+ * is a plain loop gain; this engine's loop also carries record EQ, tape
+ * saturation and head losses, so the same nominal gain decays faster, and it
+ * gets proportionally worse the lower you go.
+ *
+ * So the pairs below are measured, not derived: for each old feedback value,
+ * the intensity whose repeat train loses the same dB per repeat. (Rendered an
+ * impulse through both engines and least-squares fitted the peak envelope.)
+ * The old flat scale is the 0.80 row and nowhere else — at 0.40 it asked for
+ * 0.30 where 0.44 is needed, which is 2.3 dB per repeat too fast and is why
+ * an imported patch came back with a repeat or two missing.
+ *
+ * Resolution is the 0.02 sweep grid, hence the two flat pairs; interpolating
+ * between measured points beats a curve fitted through them. */
 static void te2_legacy_feedback(te2_instance *inst, float v)
 {
-    te2_set_index(inst, TE2_P_INTENSITY, v * 0.75f);
+    static const struct { float fb, intensity; } kMap[] = {
+        { 0.00f, 0.00f }, { 0.10f, 0.20f }, { 0.15f, 0.24f }, { 0.20f, 0.32f },
+        { 0.25f, 0.34f }, { 0.30f, 0.38f }, { 0.35f, 0.42f }, { 0.40f, 0.44f },
+        { 0.45f, 0.48f }, { 0.50f, 0.48f }, { 0.55f, 0.52f }, { 0.60f, 0.52f },
+        { 0.65f, 0.54f }, { 0.70f, 0.56f }, { 0.75f, 0.58f }, { 0.80f, 0.60f },
+        { 0.85f, 0.62f }, { 0.90f, 0.66f }, { 1.00f, 0.68f },
+    };
+    const int n = (int)(sizeof kMap / sizeof kMap[0]);
+    if (v <= kMap[0].fb)     { te2_set_index(inst, TE2_P_INTENSITY, kMap[0].intensity); return; }
+    if (v >= kMap[n-1].fb)   { te2_set_index(inst, TE2_P_INTENSITY, kMap[n-1].intensity); return; }
+    for (int i = 1; i < n; i++) {
+        if (v > kMap[i].fb) continue;
+        const float span = kMap[i].fb - kMap[i-1].fb;
+        const float t = span > 0.0f ? (v - kMap[i-1].fb) / span : 0.0f;
+        te2_set_index(inst, TE2_P_INTENSITY,
+                      kMap[i-1].intensity + t * (kMap[i].intensity - kMap[i-1].intensity));
+        return;
+    }
+}
+
+/* mix -> echo volume. TapeDelay's Mix was a crossfade (dry*(1-m) + wet*m), so
+ * the wet-to-dry RATIO it produced was m/(1-m). This engine's Mix is a
+ * unity-overlap law — both paths full at noon — so that same ratio has to come
+ * from Echo Volume instead, or the repeats arrive quieter than they were
+ * relative to the dry. At the old default of 0.5 that is exactly 1.0, which is
+ * twice what Echo Volume otherwise defaults to. Above m = 0.5 the ratio exceeds
+ * what Echo Volume can express; it clamps, and this engine's own law has
+ * already started fading the dry by then, which covers the rest. */
+static void te2_legacy_echo_volume_from_mix(te2_instance *inst, float mix)
+{
+    if (mix < 0.0f) mix = 0.0f;
+    if (mix > 1.0f) mix = 1.0f;
+    float ratio = (mix >= 1.0f) ? 1.0f : mix / (1.0f - mix);
+    if (ratio > 1.0f) ratio = 1.0f;
+    te2_set_index(inst, TE2_P_ECHO_VOL, ratio);
 }
 
 /* tone -> treble. TapeDelay's tone is a one-pole lowpass swept 500 Hz..12 kHz;
@@ -254,7 +303,10 @@ static int te2_try_legacy_state(te2_instance *inst, const char *val)
 
     te2_legacy_time(inst, v);
     te2_legacy_feedback(inst, fb);
-    if (te2_json_number(val, "mix", &v) == 0)  te2_set_index(inst, TE2_P_MIX, v);
+    if (te2_json_number(val, "mix", &v) == 0) {
+        te2_set_index(inst, TE2_P_MIX, v);
+        te2_legacy_echo_volume_from_mix(inst, v);
+    }
     if (te2_json_number(val, "tone", &v) == 0) te2_legacy_tone(inst, v);
     char div[24];
     if (te2_json_string(val, "division", div, sizeof div) == 0)
@@ -411,7 +463,13 @@ static void te2_set_param(void *instance, const char *key, const char *val)
 
     /* TapeDelay parameter names, for anything that replays them one at a time.
      * "mix" and "stereo_width" are spelled the same in both and need no alias
-     * — stereo_width now drives the real ping-pong widener. */
+     * — stereo_width now drives the real ping-pong widener.
+     *
+     * Deliberately NOT the echo-volume-from-mix correction the state path
+     * applies: "mix" is also this engine's own parameter, so there is no way
+     * to tell an old module replaying its patch from a user turning the Mix
+     * knob, and moving Echo Volume underneath the latter would be indefensible.
+     * A whole state blob is unambiguous; a single key is not. */
     if (!strcmp(key, "time"))         { te2_legacy_time(inst, (float)atof(val)); return; }
     if (!strcmp(key, "feedback"))     { te2_legacy_feedback(inst, (float)atof(val)); return; }
     if (!strcmp(key, "tone"))         { te2_legacy_tone(inst, (float)atof(val)); return; }
