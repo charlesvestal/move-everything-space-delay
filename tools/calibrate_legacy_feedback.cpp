@@ -88,22 +88,34 @@ int main(int argc, char **argv)
         if (d > -90) { ni.push_back(i/100.0); nd.push_back(d); }
     }
 
-    printf("\nold engine: feedback -> dB/repeat   =>  matching intensity\n");
-    for (int f = 10; f <= 95; f += 5) {
+    printf("\nold feedback -> matching intensity, PER HEAD\n");
+    printf("   fb    decay      H1     H2     H3\n");
+    for (int f = 5; f <= 95; f += 5) {
         void *inst = O->create_instance(".", nullptr);
         char v[32]; snprintf(v,sizeof v,"%.4f", f/100.0);
         O->set_param(inst, "feedback", v);
         double fi;
         const double d = decay_per_repeat(O, inst, &fi);
         O->destroy_instance(inst);
-        /* invert the new-engine curve (monotone increasing in intensity) */
-        double best = 0, bestErr = 1e9;
-        for (size_t k = 0; k < ni.size(); k++) {
-            const double e = fabs(nd[k] - d);
-            if (e < bestErr) { bestErr = e; best = ni[k]; }
+        printf("   %.2f  %+7.2f  ", f/100.0, d);
+        for (const char *mode : {"H1","H2","H3"}) {
+            double best = 0, bestErr = 1e9;
+            for (int i = 6; i <= 74; i += 1) {
+                void *n2 = N->create_instance(".", nullptr);
+                N->set_param(n2, "mode", mode);
+                snprintf(v,sizeof v,"%.2f", i/100.0);
+                N->set_param(n2, "intensity", v);
+                N->set_param(n2, "echo_volume", "1.0");
+                double f2;
+                const double d2 = decay_per_repeat(N, n2, &f2);
+                N->destroy_instance(n2);
+                if (d2 < -90) continue;
+                const double e = fabs(d2 - d);
+                if (e < bestErr) { bestErr = e; best = i/100.0; }
+            }
+            printf(" %.2f ", best);
         }
-        printf("   fb %.2f  %+7.2f dB  ->  intensity %.2f   (ratio %.3f)\n",
-               f/100.0, d, best, best / (f/100.0));
+        printf("\n");
     }
     return 0;
 }

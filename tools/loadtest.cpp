@@ -323,6 +323,50 @@ int main(int argc, char **argv)
         if (imported) fx->destroy_instance(imported);
     }
 
+    /* -- the two import corrections, at points where they were WRONG ---- */
+    /* Both of these shipped broken once, and neither is visible by reading
+     * the code — the numbers only came out of measuring against the old
+     * engine. Pin the shape of each so a "simplification" cannot quietly
+     * restore the version that was wrong. */
+    {
+        /* feedback -> intensity is per head. A single table fitted on head 3
+         * is 11.5 dB/repeat out on head 1, so H1 and H3 must NOT agree. */
+        void *a = fx->create_instance(".", nullptr);
+        void *b = fx->create_instance(".", nullptr);
+        char h1[64] = {0}, h3[64] = {0};
+        fx->set_param(a, "mode", "H1"); fx->set_param(a, "feedback", "0.4000");
+        fx->set_param(b, "mode", "H3"); fx->set_param(b, "feedback", "0.4000");
+        fx->get_param(a, "intensity", h1, sizeof h1);
+        fx->get_param(b, "intensity", h3, sizeof h3);
+        CHECK(fabs(atof(h1) - 0.55) < 0.02,
+              "feedback 0.4 on head 1 -> intensity 0.55 (%s)", h1);
+        CHECK(fabs(atof(h3) - 0.44) < 0.02,
+              "feedback 0.4 on head 3 -> intensity 0.44 (%s)", h3);
+        CHECK(atof(h1) - atof(h3) > 0.05,
+              "the feedback table is per head, not shared");
+        fx->destroy_instance(a); fx->destroy_instance(b);
+
+        /* mix -> echo_volume is 1/(2(1-m)) below noon, NOT m/(1-m). Both give
+         * 1.0 at m=0.5, which is exactly why the wrong one shipped: the
+         * default could not see it. Check away from noon. */
+        static const struct { const char *mix; double want; } kMix[] = {
+            { "0.2000", 0.625 }, { "0.3500", 0.769 }, { "0.5000", 1.0 },
+        };
+        for (auto &c : kMix) {
+            void *m = fx->create_instance(".", nullptr);
+            char st[512];
+            snprintf(st, sizeof st,
+                     "{\"time\":400,\"feedback\":0.4000,\"mix\":%s,\"tone\":0.5000,"
+                     "\"stereo_width\":0,\"division\":\"free\",\"bpm\":120}", c.mix);
+            fx->set_param(m, "state", st);
+            char got[64] = {0};
+            fx->get_param(m, "echo_volume", got, sizeof got);
+            CHECK(fabs(atof(got) - c.want) < 0.02,
+                  "mix %s -> echo_volume %.3f (%s)", c.mix, c.want, got);
+            fx->destroy_instance(m);
+        }
+    }
+
     /* -- TapeDelay (schwung-space-delay) preset import ------------------ */
     {
         /* its patch blob, verbatim from that module's get_param("state") */
@@ -340,8 +384,11 @@ int main(int argc, char **argv)
         fx->get_param(inst, "mix", buf, sizeof buf);
         CHECK(fabs(atof(buf) - 0.5) < 1e-3, "legacy mix carries over");
         fx->get_param(inst, "intensity", buf, sizeof buf);
-        CHECK(fabs(atof(buf) - 0.6) < 1e-3,
-              "legacy feedback 0.8 -> intensity 0.6 (scaled below runaway)");
+        /* 250 ms lands on head 2, where feedback 0.8 calibrates to 0.55. The
+         * 0.60 this expected is the head 3 figure, which is what the old
+         * shared table returned for every patch regardless of head. */
+        CHECK(fabs(atof(buf) - 0.55) < 1e-2,
+              "legacy feedback 0.8 on head 2 -> intensity 0.55 (%s)", buf);
         fx->get_param(inst, "stereo_width", buf, sizeof buf);
         CHECK(atoi(buf) == 50, "legacy stereo_width 50 carries over (%s)", buf);
         fx->get_param(inst, "ping_pong", buf, sizeof buf);

@@ -1,6 +1,6 @@
 {
-  "version": "1.3.4",
-  "download_url": "https://github.com/charlesvestal/schwung-space-delay/releases/download/v1.3.4/tapedelay-module.tar.gz",
+  "version": "1.3.5",
+  "download_url": "https://github.com/charlesvestal/schwung-space-delay/releases/download/v1.3.5/tapedelay-module.tar.gz",
   "name": "Tape Echo 2",
   "description": "Component-modeled vintage three-head tape echo with spring reverb: 12 head/reverb modes, in-loop tape saturation, wow & flutter, tape age, tempo sync.",
   "repo_url": "https://github.com/charlesvestal/schwung-space-delay"

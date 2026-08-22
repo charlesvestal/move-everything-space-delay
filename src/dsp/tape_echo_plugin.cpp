@@ -190,50 +190,91 @@ static void te2_legacy_time(te2_instance *inst, float ms)
  *
  * So the pairs below are measured, not derived: for each old feedback value,
  * the intensity whose repeat train loses the same dB per repeat. (Rendered an
- * impulse through both engines and least-squares fitted the peak envelope.)
- * The old flat scale is the 0.80 row and nowhere else — at 0.40 it asked for
- * 0.30 where 0.44 is needed, which is 2.3 dB per repeat too fast and is why
- * an imported patch came back with a repeat or two missing.
+ * impulse through both engines and least-squares fitted the peak envelope;
+ * tools/calibrate_legacy_feedback.cpp regenerates the whole table.)
  *
- * Resolution is the 0.02 sweep grid, hence the two flat pairs; interpolating
- * between measured points beats a curve fitted through them. */
+ * IT IS PER HEAD, and that is not a refinement — a single table fitted on head
+ * 3 is 11.5 dB per repeat wrong on head 1, which is most of the decay. Head 1
+ * needs intensity 0.55 where head 3 needs 0.44 for the same feedback 0.4.
+ * Heads 2 and 3 are close to each other; head 1 is the outlier. The importer
+ * only ever selects a single head (te2_legacy_time picks the one that reaches
+ * the stored time), so three columns cover every patch that can arrive — the
+ * multi-head modes are not reachable through this path and are not fitted.
+ *
+ * Read the head from the instance rather than taking it as an argument:
+ * te2_try_legacy_state calls te2_legacy_time first so the mode is already
+ * right, and on the one-key-at-a-time path there is no ordering guarantee at
+ * all, so the current mode is the best information available either way.
+ *
+ * Resolution is the 0.01 sweep grid. The 0.68 ceiling on head 1 from feedback
+ * 0.85 up is the engine's sustain threshold: past there it cannot decay slowly
+ * enough to match, and running past it would turn an old preset into a siren. */
 static void te2_legacy_feedback(te2_instance *inst, float v)
 {
-    static const struct { float fb, intensity; } kMap[] = {
-        { 0.00f, 0.00f }, { 0.10f, 0.20f }, { 0.15f, 0.24f }, { 0.20f, 0.32f },
-        { 0.25f, 0.34f }, { 0.30f, 0.38f }, { 0.35f, 0.42f }, { 0.40f, 0.44f },
-        { 0.45f, 0.48f }, { 0.50f, 0.48f }, { 0.55f, 0.52f }, { 0.60f, 0.52f },
-        { 0.65f, 0.54f }, { 0.70f, 0.56f }, { 0.75f, 0.58f }, { 0.80f, 0.60f },
-        { 0.85f, 0.62f }, { 0.90f, 0.66f }, { 1.00f, 0.68f },
+    /* { old feedback, intensity for H1, for H2, for H3 } */
+    static const struct { float fb, i[3]; } kMap[] = {
+        { 0.00f, { 0.00f, 0.00f, 0.00f } }, { 0.05f, { 0.34f, 0.14f, 0.15f } },
+        { 0.10f, { 0.40f, 0.19f, 0.21f } }, { 0.15f, { 0.44f, 0.23f, 0.25f } },
+        { 0.20f, { 0.47f, 0.29f, 0.31f } }, { 0.25f, { 0.49f, 0.32f, 0.34f } },
+        { 0.30f, { 0.52f, 0.35f, 0.37f } }, { 0.35f, { 0.53f, 0.39f, 0.41f } },
+        { 0.40f, { 0.55f, 0.41f, 0.44f } }, { 0.45f, { 0.56f, 0.44f, 0.47f } },
+        { 0.50f, { 0.57f, 0.46f, 0.49f } }, { 0.55f, { 0.59f, 0.48f, 0.51f } },
+        { 0.60f, { 0.60f, 0.49f, 0.53f } }, { 0.65f, { 0.61f, 0.50f, 0.55f } },
+        { 0.70f, { 0.62f, 0.52f, 0.57f } }, { 0.75f, { 0.65f, 0.53f, 0.58f } },
+        { 0.80f, { 0.67f, 0.55f, 0.60f } }, { 0.85f, { 0.68f, 0.56f, 0.62f } },
+        { 0.90f, { 0.68f, 0.57f, 0.67f } }, { 1.00f, { 0.68f, 0.59f, 0.68f } },
     };
     const int n = (int)(sizeof kMap / sizeof kMap[0]);
-    if (v <= kMap[0].fb)     { te2_set_index(inst, TE2_P_INTENSITY, kMap[0].intensity); return; }
-    if (v >= kMap[n-1].fb)   { te2_set_index(inst, TE2_P_INTENSITY, kMap[n-1].intensity); return; }
-    for (int i = 1; i < n; i++) {
-        if (v > kMap[i].fb) continue;
-        const float span = kMap[i].fb - kMap[i-1].fb;
-        const float t = span > 0.0f ? (v - kMap[i-1].fb) / span : 0.0f;
+
+    /* mode enum 0..11 -> DSP mode 1..12 -> leading head 0..2 */
+    const int mode = (int)(inst->values[TE2_P_MODE].load(std::memory_order_relaxed) + 0.5f) + 1;
+    int h = teLeadingHeadIndexForMode(mode);
+    if (h < 0) h = 0;
+    if (h > 2) h = 2;
+
+    if (v <= kMap[0].fb)   { te2_set_index(inst, TE2_P_INTENSITY, kMap[0].i[h]); return; }
+    if (v >= kMap[n-1].fb) { te2_set_index(inst, TE2_P_INTENSITY, kMap[n-1].i[h]); return; }
+    for (int k = 1; k < n; k++) {
+        if (v > kMap[k].fb) continue;
+        const float span = kMap[k].fb - kMap[k-1].fb;
+        const float t = span > 0.0f ? (v - kMap[k-1].fb) / span : 0.0f;
         te2_set_index(inst, TE2_P_INTENSITY,
-                      kMap[i-1].intensity + t * (kMap[i].intensity - kMap[i-1].intensity));
+                      kMap[k-1].i[h] + t * (kMap[k].i[h] - kMap[k-1].i[h]));
         return;
     }
 }
 
-/* mix -> echo volume. TapeDelay's Mix was a crossfade (dry*(1-m) + wet*m), so
- * the wet-to-dry RATIO it produced was m/(1-m). This engine's Mix is a
- * unity-overlap law — both paths full at noon — so that same ratio has to come
- * from Echo Volume instead, or the repeats arrive quieter than they were
- * relative to the dry. At the old default of 0.5 that is exactly 1.0, which is
- * twice what Echo Volume otherwise defaults to. Above m = 0.5 the ratio exceeds
- * what Echo Volume can express; it clamps, and this engine's own law has
- * already started fading the dry by then, which covers the rest. */
+/* mix -> echo volume.
+ *
+ * TapeDelay's Mix was a crossfade, dry*(1-m) + wet*m, so the wet-to-dry ratio
+ * it produced was m/(1-m). This engine's Mix is a unity-overlap law —
+ * dryMixGain = min(1, 2(1-m)), wetMixGain = min(1, 2m), both full at noon — so
+ * without a correction the repeats arrive quieter, relative to the dry, than
+ * they were.
+ *
+ * The correction is NOT that old ratio. Echo Volume multiplies the wet path on
+ * top of a law that already has its own ratio, so what is wanted is the
+ * quotient of the two:
+ *
+ *     E = [m/(1-m)]  /  [min(1,2m) / min(1,2(1-m))]
+ *
+ * which is 1/(2(1-m)) below noon and 2m above it. Setting E to the old ratio
+ * directly — which this did in 1.3.4 — is only correct at m = 0.5, where the
+ * new law's own ratio happens to be 1. It shipped, and at m = 0.2 it landed
+ * 16.7 dB light. Measured, not spotted by reading it.
+ *
+ * Above noon the requested value exceeds 1 and clamps: this engine's law is
+ * already fading the dry there, which covers part of it but not all — a wet-
+ * heavy old patch still comes back a few dB shy. That one is a ceiling, not a
+ * mistake. */
 static void te2_legacy_echo_volume_from_mix(te2_instance *inst, float mix)
 {
     if (mix < 0.0f) mix = 0.0f;
     if (mix > 1.0f) mix = 1.0f;
-    float ratio = (mix >= 1.0f) ? 1.0f : mix / (1.0f - mix);
-    if (ratio > 1.0f) ratio = 1.0f;
-    te2_set_index(inst, TE2_P_ECHO_VOL, ratio);
+    float e = (mix <= 0.5f) ? 1.0f / (2.0f * (1.0f - mix)) : 2.0f * mix;
+    if (e > 1.0f) e = 1.0f;
+    if (e < 0.0f) e = 0.0f;
+    te2_set_index(inst, TE2_P_ECHO_VOL, e);
 }
 
 /* tone -> treble. TapeDelay's tone is a one-pole lowpass swept 500 Hz..12 kHz;
