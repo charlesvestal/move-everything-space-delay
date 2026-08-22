@@ -1,44 +1,81 @@
 {
-  "title": "TapeDelay",
-  "children": [
+  "title": "Tape Echo 2",
+  "sections": [
     {
-      "title": "Overview",
-      "lines": [
-        "Tape delay with",
-        "flutter and tone",
-        "shaping.",
-        "",
-        "Vintage tape echo",
-        "with tempo sync,",
-        "ping-pong stereo,",
-        "and warm repeats."
-      ]
+      "heading": "Overview",
+      "body": "Component-modeled vintage three-head tape echo with a three-spring reverb tank. Port of Tape Echo 2 by Dusk Audio (GPL-3.0). The record EQ and tape saturation sit INSIDE the feedback loop, so each repeat darkens and compresses instead of just getting quieter \u2014 which is what lets high Intensity settings bloom into warm, stable self-oscillation."
     },
     {
-      "title": "Controls",
-      "lines": [
-        "Knob 1: Time",
-        " Delay 20-2000ms",
-        "",
-        "Knob 2: Division",
-        " Tempo sync mode:",
-        " free, 1/1, 1/2,",
-        " 1/2d, 1/4, 1/4d,",
-        " 1/4t, 1/8, 1/8d,",
-        " 1/8t, 1/16, 1/16t",
-        "",
-        "Knob 3: Feedback",
-        " Echo repeats (0-100%)",
-        "",
-        "Knob 4: Mix",
-        " Dry/wet blend",
-        "",
-        "Knob 5: Tone",
-        " LP filter on repeats",
-        "",
-        "Knob 6: Stereo Width",
-        " 0=mono 100=ping-pong"
-      ]
+      "heading": "Mode",
+      "body": "Which of the three playback heads are live, and whether the spring tank is in circuit. Digits are the heads, R is reverb: H1, H2, H3, H2+3, H1+R, H2+R, H3+R, H12+R, H23+R, H13+R, H123R, Rev. Head 1 is the shortest tap, head 3 the longest (about 1.00 / 1.91 / 2.76 times the motor time). Rev is spring only, no tape."
+    },
+    {
+      "heading": "Repeat Rate",
+      "body": "Capstan motor speed, and so the delay time. Left is slow (about 177 ms on head 1), right is fast (about 69 ms). Heads 2 and 3 scale up from that. Changes glide like a real transport rather than jumping, because the motor has inertia."
+    },
+    {
+      "heading": "Intensity",
+      "body": "Feedback \u2014 how much of the playback head sum is fed back onto the tape. Above roughly three quarters it self-oscillates and builds into a growing drone. That is the hardware behaviour, and it gets loud: ride Echo Volume."
+    },
+    {
+      "heading": "Echo Volume",
+      "body": "Level of the tape echo path in the output mix. Independent of Reverb Volume, so you can run either alone."
+    },
+    {
+      "heading": "Reverb Volume",
+      "body": "Level of the spring tank. Only audible in the modes that include R. The tank is three bidirectional dispersive springs, so an impulse arrives as an ascending chirp and each round trip gets darker and more smeared."
+    },
+    {
+      "heading": "Mix",
+      "body": "Dry against the combined wet bus. 50 percent is the classic parallel setting with both paths at unity \u2014 below that the dry stays at unity while the wet fades in, above it the wet stays at unity while the dry fades out. 0 is fully dry, 100 fully wet."
+    },
+    {
+      "heading": "Tempo Sync",
+      "body": "Locks the leading active head to the host tempo instead of the Repeat Rate knob. The note comes from the Echo Rate Note detent, read through whichever head is leading in the current Mode."
+    },
+    {
+      "heading": "Echo Rate Note",
+      "body": "The eleven physical tempo-sync detents, 1 (longest) to 11 (shortest). The same detent means a different note depending on the leading head, exactly as on the hardware \u2014 changing Mode keeps the detent and reassigns its note. Notes the transport cannot physically reach are pinned at the motor limit rather than transposed."
+    },
+    {
+      "heading": "Input Drive",
+      "body": "Preamp gain into the record stage. Higher settings push the tape into saturation and soft compression before anything is recorded, thickening the repeats."
+    },
+    {
+      "heading": "Bass",
+      "body": "Low shelf on the echo path only, about plus or minus 17 dB. The dry signal is untouched. Cutting bass keeps long feedback washes from turning muddy."
+    },
+    {
+      "heading": "Treble",
+      "body": "High shelf on the echo path only, about plus or minus 17 dB. Because it is inside the loop, cutting treble makes each successive repeat darker than the last."
+    },
+    {
+      "heading": "Wow & Flutter",
+      "body": "Transport instability: slow wow, capstan flutter, and a stochastic scrape band around 6 Hz. Zero is not perfectly still \u2014 the modeled transport always has some motion, matching the reference machine."
+    },
+    {
+      "heading": "Tape Age",
+      "body": "Cartridge condition. New is a fresh tape and serviced transport. Used and Old progressively add noise, more wow, high-frequency loss, level wobble and splice wear."
+    },
+    {
+      "heading": "Input Send",
+      "body": "The dub switch. Off stops feeding new audio onto the tape while the existing repeats keep circulating and decaying, and the spring stays live. Play a phrase, switch it off, and the echoes wash out on their own over a clean dry signal."
+    },
+    {
+      "heading": "Ping Pong",
+      "body": "Sends successive repeats to alternate sides. Each playback head runs its own alternation at its own delay, so the multi-head modes separate properly instead of smearing. The tape loop itself is untouched: one mono tape, the same repeat train and the same tape character as always \u2014 only the side each repeat leaves from changes. With Ping Pong off the echo is the centred mono bus it has always been."
+    },
+    {
+      "heading": "Stereo Width",
+      "body": "How far Ping Pong swings, from centred at 0 to hard left and right at 100. Constant power across the sweep, so widening never changes the level. Only does anything while Ping Pong is on. A TapeDelay patch's stereo width arrives here and switches Ping Pong on, since width is what made that module's two cross-fed delay lines alternate."
+    },
+    {
+      "heading": "TapeDelay presets",
+      "body": "Tape Echo 2 reads settings saved by the older TapeDelay module (schwung-space-delay). A patch names the module it wants, so run tools/convert_tapedelay_patch.py on it first to point that slot here; the settings themselves are then translated on load. Its delay time picks the playback head that can actually reach it \u2014 head 1 covers about 69 to 177 ms, head 2 up to 339, head 3 up to 490 \u2014 and the motor is set from there; times outside that range pin at the nearest end. Feedback scales to just under self-oscillation, mix and tone carry across (tone becomes the treble shelf), and a note division switches tempo sync on at the nearest detent. Stereo width maps to the Ping Pong widener and switches it on."
+    },
+    {
+      "heading": "Credits",
+      "body": "DSP: Tape Echo 2 by Dusk Audio, github.com/dusk-audio/dusk-audio-plugins, GPL-3.0. The core carries one Schwung-specific change, marked in the files: a per-head Ping Pong stage on the echo output tap. With Ping Pong off it is the original sample for sample, and the build checks that against a fresh copy of upstream. Move port by athousanddetails."
     }
   ]
 }

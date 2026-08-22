@@ -1,77 +1,94 @@
-# Move Everything TapeDelay
+# TapeDelay — Tape Echo and Spring Reverb for Ableton Move
 
-Tape delay audio effect module for Move Everything.
+Module id `tapedelay` for [Schwung](https://github.com/charlesvestal/schwung).
 
-## Prerequisites
+A component-modelled vintage three-head tape echo with spring reverb. Twelve
+head and reverb combinations, record EQ and tape saturation inside the feedback
+loop so every repeat darkens and compresses, wow and flutter, tape age, and
+tempo sync with the reference machine's leading-head note tables.
 
-- [Move Everything](https://github.com/charlesvestal/move-everything) installed on your Ableton Move
+The engine is **Tape Echo 2** by [Dusk Audio](https://github.com/dusk-audio/dusk-audio-plugins),
+ported to Move by **athousanddetails**. It replaced the original `spacecho.c`
+delay that shipped under this id through v0.4.3 — see *Upgrading* below.
 
-## Installation
+## Controls
 
-### Via Module Store (Recommended)
+| Page | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| **Echo** | Mode | Rate | Intensity | Echo Vol | Reverb Vol | Mix | Tempo Sync | Rate Note |
+| **Tape** | Drive | Bass | Treble | Wow/Flutter | Tape Age | Input Send | Ping Pong | Width |
 
-1. Launch Move Everything on your Move
-2. Select **Module Store** from the main menu
-3. Navigate to **Audio FX** → **TapeDelay**
-4. Select **Install**
+Modes are `H1 H2 H3 H2+3 H1+R H2+R H3+R H12+R H23+R H13+R H123R Rev` — digits
+are the live playback heads, `R` is the spring tank.
 
-### Manual Installation
+Intensity above ~75% self-oscillates. Input Send is the dub switch: off stops
+feeding the tape while existing repeats wash out. Bass and Treble are on the
+echo path only.
 
-```bash
-./scripts/install.sh
+Ping Pong alternates successive repeats left and right, Width sets how far it
+swings. Each head alternates on its own delay, so the multi-head modes separate
+too. With it off the echo bus is mono and the output is bit-identical to Dusk
+Audio's original — the build checks that against upstream on every run.
+
+## Upgrading from the old TapeDelay (≤ 0.4.3)
+
+Nothing to do. The module id is unchanged, so the Module Store upgrades in
+place, and the engine reads the old TapeDelay state directly: the stored delay
+time picks the playback head that can reach it, and feedback, mix, tone, note
+division and stereo width carry across. Existing patches and slot autosaves
+name `tapedelay` and keep working.
+
+The old parameter names (`time`, `feedback`, `tone`, `division`, `mix`,
+`stereo_width`) are still accepted as set_param keys for anything that replays
+them one at a time.
+
+## Remote panel
+
+A tape-deck style editor in the browser: draggable knobs, mode and rate-note
+selectors, tempo sync and input send switches, and a record meter. Open it
+while the module is loaded in an FX slot:
+
+```
+move.local:7700/api/remote-ui/module-assets/tapedelay/web_ui.html
 ```
 
-## Features
+Where Schwung offers custom UIs to FX slots, the same panel appears inside the
+module's section on `move.local:7700/remote-ui`. It reads the component it is
+driving from the host, so it addresses the right FX slot either way.
 
-- **Time**: Delay time from 20ms to 2 seconds
-- **Feedback**: Echo repeats (0-95%)
-- **Mix**: Dry/wet blend
-- **Tone**: Lowpass filter on repeats (500Hz to 12kHz)
-- **Stereo Width**: 0 = mono ping-pong repeats, 100 = full L/R ping-pong
+Works with [Movy](https://github.com/DimaDake/schwung-movy) — a
+`movy_config.json` ships with the module.
+
+## Install
+
+Via the Schwung Module Store, or manually: copy `dist/tapedelay/` to
+`/data/UserData/schwung/modules/audio_fx/tapedelay/` on the device.
 
 ## Building
 
+Requires Docker (cross-compiles for the Move's ARM64, pinned to glibc 2.35):
+
 ```bash
-./scripts/build.sh      # Build for ARM64 via Docker
-./scripts/install.sh    # Deploy to Move
+./scripts/build.sh               # builds build/tapedelay.so + dist/tapedelay-module.tar.gz
+./scripts/deploy.sh <host>       # safe deploy (atomic rename, never over a live .so)
 ```
 
-## Signal Flow
-
-```
-Input ---+-------------------------------- Dry ----+
-         |                                         |
-         +---> Delay Line ---> Tone Filter --> Wet-+---> Mix ---> Output
-                   ^                               |
-                   |                               |
-                   +----------- Feedback <---------+
-```
-
-## Module ID
-
-**Note:** This module's ID is `tapedelay`. When creating Signal Chain patches, reference it as:
-
-```json
-{ "type": "tapedelay", "params": { "time": 0.5, "feedback": 0.4 } }
-```
-
-## Installation Path
-
-The module installs to `/data/UserData/move-anything/modules/audio_fx/tapedelay/`
+The build gates on three things before it cross-compiles: the config contract
+(`movy_config` / `chain_params` / the C table / the chain UI all agree), the
+native DSP tests, and a core-equivalence check against a fresh checkout of
+upstream.
 
 ## Credits
 
-Based on [TapeDelay](https://github.com/cyrusasfa/TapeDelay) by Cyrus Afsary.
+- **[Tape Echo 2](https://github.com/dusk-audio/dusk-audio-plugins/tree/main/plugins/tape-echo)**
+  by **Dusk Audio** (GPL-3.0) — the DSP, and all of the modelling credit.
+  The core in `src/ported/` carries one Schwung-specific change, marked in the
+  files: a per-head ping-pong stage on the echo output tap. Switch Ping Pong
+  off and it is upstream sample for sample, which the build verifies against a
+  fresh checkout of the original.
+- Move port by **athousanddetails**.
+- Packaged under the `tapedelay` id by charlesvestal, with the port author's
+  permission.
 
-Inspired by classic tape echo units.
-
-## License
-
-MIT License - Copyright (c) 2025 Charles Vestal
-
-## AI Assistance Disclaimer
-
-This module is part of Move Everything and was developed with AI assistance, including Claude, Codex, and other AI assistants.
-
-All architecture, implementation, and release decisions are reviewed by human maintainers.  
-AI-assisted content may still contain errors, so please validate functionality, security, and license compatibility before production use.
+GPL-3.0, inherited from upstream. The original `spacecho.c` TapeDelay engine
+(MIT, by cyrusasfa) is in this repository's history up to tag `v0.4.3`.
