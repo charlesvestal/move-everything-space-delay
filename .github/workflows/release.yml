@@ -44,31 +44,28 @@ jobs:
       - name: Commit release.json
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Save install_path before switching branches
-          INSTALL_PATH=$(jq -r '.install_path // empty' release.json 2>/dev/null || echo "")
-
           git fetch origin main
           git checkout -f main
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Recreate release.json on main
-          if [ -n "$INSTALL_PATH" ]; then
-            cat > release.json << EOF
-          {
-            "version": "${VERSION}",
-            "download_url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/tapedelay-module.tar.gz",
-            "install_path": "${INSTALL_PATH}"
-          }
-          EOF
-          else
-            cat > release.json << EOF
-          {
-            "version": "${VERSION}",
-            "download_url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/tapedelay-module.tar.gz"
-          }
-          EOF
-          fi
+          # Rewrite only version + download_url. The previous version of this
+          # step regenerated the file from scratch, which silently dropped
+          # name / description / repo_url — fields the Module Store reads.
+          REPO="${{ github.repository }}" TAG="${{ github.ref_name }}" \
+          python3 - "$VERSION" <<'PY'
+          import json, os, sys
+          v = sys.argv[1]
+          with open("release.json") as f:
+              r = json.load(f)
+          r["version"] = v
+          r["download_url"] = (f"https://github.com/{os.environ['REPO']}"
+                               f"/releases/download/{os.environ['TAG']}"
+                               "/tapedelay-module.tar.gz")
+          with open("release.json", "w") as f:
+              json.dump(r, f, indent=2)
+              f.write("\n")
+          PY
 
           git add release.json
           git commit -m "chore: update release.json for ${{ github.ref_name }}" || echo "No changes to commit"

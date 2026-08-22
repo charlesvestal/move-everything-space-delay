@@ -1,32 +1,5 @@
 /*
- * Move Anything Plugin API v1 & v2
- *
- * SPDX-License-Identifier: MIT
- *
- * Copyright (c) 2025-2026 Charles Vestal
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this file and associated documentation, to deal in the Software without
- * restriction, including without limitation the rights to use, copy, modify,
- * merge, publish, distribute, sublicense, and/or sell copies of the Software,
- * and to permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- *
- * ---
- *
- * This file is dual-licensed. Within the Move Everything host repository it is
- * also covered by the repository-wide CC BY-NC-SA 4.0 license. External module
- * authors may use, copy, and distribute this file under the MIT license above
- * without any CC BY-NC-SA 4.0 obligations.
- *
- * ---
+ * Schwung Plugin API v1
  *
  * Stable ABI for DSP modules loaded by the host runtime.
  * Modules are .so files loaded via dlopen() and must export move_plugin_init_v1().
@@ -112,6 +85,37 @@ typedef struct host_api_v1 {
      * Uses sampler_get_bpm() fallback chain: MIDI clock → set tempo → settings → 120.
      * NULL if host does not support tempo. */
     float (*get_bpm)(void);
+
+    /* Inject a USB-MIDI packet into Move's MIDI_IN as if it came from
+     * internal hardware (pads/knobs). The drain forces cable 0 so Move
+     * treats the event as native input — no MIDI_OUT cable-2 echo.
+     *
+     * msg: 4-byte USB-MIDI packet [cable|CIN, status, data1, data2]
+     *      The cable nibble is ignored (always forced to 0 by the drain).
+     * len: must be 4
+     * Returns: bytes queued, or 0 on failure (SHM unavailable, ring full).
+     *
+     * NULL if host does not support MIDI-IN injection (non-shadow host).
+     * Rate-limited to 8 packets/tick at the drain; callers should not
+     * burst more than that per render block. */
+    int (*midi_inject_to_move)(const uint8_t *msg, int len);
+
+    /* Return the receive channel for the slot owning this plugin instance.
+     * -1 = All (no filter), 0-15 = specific channel byte, -2 = instance not
+     * registered (e.g. master FX, host-level plugin).
+     *
+     * Use this to address Move tracks via midi_inject_to_move: the inject
+     * channel must be the slot's recv channel, NOT the slot's
+     * forward_channel (which is purely an internal synth-side routing hint,
+     * e.g. minijv part 6). NULL if the host doesn't expose slot context. */
+    int (*slot_recv_channel)(void *instance);
+
+    /* Beats since transport start of the active clock source (Move's native
+     * sequencer, or an internal module's emitted clock), derived from
+     * 24-PPQN realtime ticks and interpolated per block. Returns < 0 when
+     * no transport is running — callers must fall back (e.g. LFO free-run).
+     * Appended in 2026-07; may be NULL on older hosts, always guard. */
+    double (*get_beat_position)(void);
 
 } host_api_v1_t;
 
