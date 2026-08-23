@@ -1,8 +1,38 @@
-#!/usr/bin/env bash
-# Kept for the ecosystem convention (`./scripts/install.sh`). The real work is
-# in deploy.sh, which uploads to a temp name and rename(2)s into place —
-# scp'ing straight over a live dsp.so mutates the mmap'd code pages of a
-# running process and takes the firmware down with it. The version this
-# replaced did exactly that, and also still pointed at the pre-Schwung
-# /data/UserData/move-anything path.
-exec "$(cd "$(dirname "$0")" && pwd)/deploy.sh" "$@"
+#!/bin/bash
+# Install TapeDelay module to Move
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+cd "$REPO_ROOT"
+
+if [ ! -d "dist/tapedelay" ]; then
+    echo "Error: dist/tapedelay not found. Run ./scripts/build.sh first."
+    exit 1
+fi
+
+echo "=== Installing TapeDelay Module ==="
+
+# Deploy to Move - audio_fx subdirectory
+echo "Copying module to Move..."
+ssh ableton@move.local "mkdir -p /data/UserData/move-anything/modules/audio_fx/tapedelay"
+scp -r dist/tapedelay/* ableton@move.local:/data/UserData/move-anything/modules/audio_fx/tapedelay/
+
+# Install chain presets if they exist
+if [ -d "src/chain_patches" ] && ls src/chain_patches/*.json >/dev/null 2>&1; then
+    echo "Installing chain presets..."
+    ssh ableton@move.local "mkdir -p /data/UserData/move-anything/patches"
+    scp src/chain_patches/*.json ableton@move.local:/data/UserData/move-anything/patches/
+fi
+
+# Set permissions so Module Store can update later
+echo "Setting permissions..."
+ssh ableton@move.local "chmod -R a+rw /data/UserData/move-anything/modules/audio_fx/tapedelay"
+
+echo ""
+echo "=== Install Complete ==="
+echo "Module installed to: /data/UserData/move-anything/modules/audio_fx/tapedelay/"
+echo "Presets installed to: /data/UserData/move-anything/patches/"
+echo ""
+echo "Restart Move Anything to load the new module."

@@ -1,114 +1,51 @@
-# TapeDelay — Tape Echo and Spring Reverb for Ableton Move
+# TapeDelay
 
-Module id `tapedelay` for [Schwung](https://github.com/charlesvestal/schwung).
+Tape delay audio effect for [Schwung](https://github.com/charlesvestal/schwung)
+on Ableton Move. Module id `tapedelay`.
 
-A component-modelled vintage three-head tape echo with spring reverb. Twelve
-head and reverb combinations, record EQ and tape saturation inside the feedback
-loop so every repeat darkens and compresses, wow and flutter, tape age, and
-tempo sync with the reference machine's leading-head note tables.
-
-The engine is **Tape Echo 2** by [Dusk Audio](https://github.com/dusk-audio/dusk-audio-plugins),
-ported to Move by **athousanddetails**. It replaced the original `spacecho.c`
-delay that shipped under this id through v0.4.3 — see *Upgrading* below.
+A circular delay line with a flutter LFO, a one-pole tone control and soft
+saturation on the feedback path. Deliberately cheap: **~0.013 ms per block on
+the Move, about 1.4% of the DSP budget**, so you can put it on every slot and
+still have the machine to yourself.
 
 ## Controls
 
-| Page | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
-|---|---|---|---|---|---|---|---|---|
-| **Echo** | Mode | Rate | Intensity | Echo Vol | Reverb Vol | Mix | Tempo Sync | Rate Note |
-| **Tape** | Drive | Bass | Treble | Wow/Flutter | Tape Age | Input Send | Ping Pong | Width |
+- **Time** — 20 ms to 2 s
+- **Division** — free, or synced (1/1 … 1/16t)
+- **Feedback** — repeats, 0–95%
+- **Mix** — dry/wet
+- **Tone** — lowpass on the repeats, 500 Hz to 12 kHz
+- **Stereo Width** — 0 = mono, 100 = full L/R ping-pong
 
-Modes are `H1 H2 H3 H2+3 H1+R H2+R H3+R H12+R H23+R H13+R H123R Rev` — digits
-are the live playback heads, `R` is the spring tank.
+## About v1.3.x, and why this is v2.0.0
 
-Intensity above ~75% self-oscillates. Input Send is the dub switch: off stops
-feeding the tape while existing repeats wash out. Bass and Treble are on the
-echo path only.
+For one day (2026-08-22) this id shipped a different engine: **Tape Echo 2**, a
+component-modelled three-head machine with a spring tank, ported from Dusk
+Audio by athousanddetails. It sounds far better than this module and it is not
+a replacement for it — measured on the device it costs **0.37 ms per block,
+about 41% of the DSP budget, so only two instances fit** where this one fits
+dozens. A utility delay that can only be used twice is not a utility delay.
 
-Ping Pong alternates successive repeats left and right, Width sets how far it
-swings. Each head alternates on its own delay, so the multi-head modes separate
-too. With it off the echo bus is mono and the output is bit-identical to Dusk
-Audio's original — the build checks that against upstream on every run.
+So `tapedelay` is the cheap delay again, and Tape Echo 2 is its own module.
+Install both; they are for different jobs.
 
-## Upgrading from the old TapeDelay (≤ 0.4.3)
+The version is 2.0.0 rather than 0.4.4 for a mechanical reason: the store
+compares versions, and anyone who took the v1.3.x update would never be offered
+anything numbered below it. If you were on v1.3.x, this update returns you to
+this engine and your Tape Echo 2 settings will not carry across — the two have
+nothing in common to carry. Nothing breaks; the old engine ignores a Tape Echo 2
+patch and comes up at its defaults.
 
-Nothing to do. The module id is unchanged, so the Module Store upgrades in
-place, and the engine reads the old TapeDelay state directly: the stored delay
-time picks the playback head that can reach it, and feedback, mix, tone, note
-division and stereo width carry across. Existing patches and slot autosaves
-name `tapedelay` and keep working.
-
-The old parameter names (`time`, `feedback`, `tone`, `division`, `mix`,
-`stereo_width`) are still accepted as set_param keys for anything that replays
-them one at a time.
-
-A **fresh** insert lands there too. Since this module inherited TapeDelay's id,
-its defaults are not this engine's own — they are what TapeDelay's own startup
-state (time 400, feedback 0.4, mix 0.5, tone 0.5) becomes through that same
-import: mode H3 at 400 ms, Intensity 0.44, Echo Volume 1.0.
-`tools/loadtest.cpp` compares a new instance against the import path directly,
-so the two cannot drift apart.
-
-Measured against the old engine at its defaults, nothing set on either
-(`tools/ab_vs_tapedelay.cpp`):
-
-| | old TapeDelay | this |
-|---|---|---|
-| repeat #1 | 399.1 ms, −10.6 dB | 403.4 ms, −12.9 dB |
-| repeat #2 | 799.6 ms, −26.2 dB | 805.4 ms, −25.9 dB |
-| brightness | 2263 Hz | 2046 Hz |
-| program level | −0.63 dB | +0.40 dB |
-
-The first repeat is 2.3 dB down because Echo Volume is already at its ceiling;
-everything after it lands within half a dB.
-
-## Remote panel
-
-A tape-deck style editor in the browser: draggable knobs, mode and rate-note
-selectors, tempo sync and input send switches, and a record meter. Open it
-while the module is loaded in an FX slot:
-
-```
-move.local:7700/api/remote-ui/module-assets/tapedelay/web_ui.html
-```
-
-Where Schwung offers custom UIs to FX slots, the same panel appears inside the
-module's section on `move.local:7700/remote-ui`. It reads the component it is
-driving from the host, so it addresses the right FX slot either way.
-
-Works with [Movy](https://github.com/DimaDake/schwung-movy) — a
-`movy_config.json` ships with the module.
-
-## Install
-
-Via the Schwung Module Store, or manually: copy `dist/tapedelay/` to
-`/data/UserData/schwung/modules/audio_fx/tapedelay/` on the device.
+Tape Echo 2's source is GPL-3.0 and remains in this repository's history at tags
+`v1.3.3`–`v1.3.5`. This tree is MIT again.
 
 ## Building
 
-Requires Docker (cross-compiles for the Move's ARM64, pinned to glibc 2.35):
-
 ```bash
-./scripts/build.sh               # builds build/tapedelay.so + dist/tapedelay-module.tar.gz
-./scripts/deploy.sh <host>       # safe deploy (atomic rename, never over a live .so)
+./scripts/build.sh      # ARM64 via Docker
+./scripts/install.sh    # deploy to move.local
 ```
-
-The build gates on three things before it cross-compiles: the config contract
-(`movy_config` / `chain_params` / the C table / the chain UI all agree), the
-native DSP tests, and a core-equivalence check against a fresh checkout of
-upstream.
 
 ## Credits
 
-- **[Tape Echo 2](https://github.com/dusk-audio/dusk-audio-plugins/tree/main/plugins/tape-echo)**
-  by **Dusk Audio** (GPL-3.0) — the DSP, and all of the modelling credit.
-  The core in `src/ported/` carries one Schwung-specific change, marked in the
-  files: a per-head ping-pong stage on the echo output tap. Switch Ping Pong
-  off and it is upstream sample for sample, which the build verifies against a
-  fresh checkout of the original.
-- Move port by **athousanddetails**.
-- Packaged under the `tapedelay` id by charlesvestal, with the port author's
-  permission.
-
-GPL-3.0, inherited from upstream. The original `spacecho.c` TapeDelay engine
-(MIT, by cyrusasfa) is in this repository's history up to tag `v0.4.3`.
+Original spacecho engine by **cyrusasfa**, ported by charlesvestal. MIT.

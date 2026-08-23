@@ -4,96 +4,88 @@ Instructions for Claude Code when working with this repository.
 
 ## Project Overview
 
-`tapedelay` is an audio_fx module for [Schwung](https://github.com/charlesvestal/schwung).
-Since v1.3.3 the engine is **Tape Echo 2** by Dusk Audio (GPL-3.0), ported to
-Move by athousanddetails. Up to v0.4.3 this id shipped a much simpler MIT
-delay (`src/dsp/spacecho.c`, by cyrusasfa) — that code is in the history, not
-in the tree.
+TapeDelay is an audio effect module for Schwung: tape delay with flutter, tone
+filtering and soft saturation. Module id `tapedelay`.
 
-**The id stayed `tapedelay` on purpose.** The Module Store extracts a tarball's
-own top-level directory into `modules/audio_fx/`, so keeping the id is what
-makes this an in-place upgrade rather than a second module sitting alongside
-the old one. Renaming the id would strand every existing patch and slot
-autosave.
+## This id briefly shipped a different engine — do not repeat it
+
+For one day (2026-08-22, v1.3.3-v1.3.5) `tapedelay` shipped **Tape Echo 2**, a
+component-modelled three-head machine ported from Dusk Audio. It was reverted at
+v2.0.0 for one measured reason:
+
+| | this engine | Tape Echo 2 |
+|---|---|---|
+| per block on the Move | 0.013 ms | 0.37 ms |
+| % of the ~900 us DSP budget | 1.4% | 41% |
+| instances that fit | dozens | **2** |
+
+**Quote the ~900 us budget, not the 2.902 ms block period.** The block period is
+what a loadtest naturally prints and it is three times too generous — the SPI
+callback has ~900 us left after the transfer, and that covers all four slots,
+master FX and mixing (`docs/REALTIME_SAFETY.md`). Measuring against the wrong
+one is how a 41% module looked like a 14% module for a day.
+
+The lesson is about the ID, not the engine: `tapedelay` is a utility delay that
+people put on several slots, and swapping its engine for something 28x heavier
+changed what the id promises. Tape Echo 2 is a good module; it is its own
+module.
+
+Its GPL-3.0 source is in this repository's history at tags `v1.3.3`-`v1.3.5`.
+This tree is MIT.
+
+Version numbering: 2.0.0 rather than 0.4.4 because the store compares versions,
+and anyone on v1.3.x would never be offered anything lower.
 
 ## Architecture
 
 ```
 src/
   dsp/
-    tape_echo_plugin.cpp   # audio_fx v2 shell: params, state, legacy import
-    te2_params.h           # the C-side parameter table
-  host/                    # Schwung API headers (audio_fx_api_v2.h, plugin_api_v1.h)
-  ported/
-    core/TapeEchoDSP.{hpp,cpp}   # Dusk Audio's core + the ping-pong addition
-    dpf-plugin/TapeEchoParams.hpp
-    shared-dpf/dsp/              # Dusk shared DSP primitives, snapshot at vendor time
-  module.json  movy_config.json  ui_chain.js  help.json  web_ui.html
+    spacecho.c          # Main DSP implementation
+    audio_fx_api_v1.h   # Audio FX API (from move-anything)
+    plugin_api_v1.h     # Plugin API types (from move-anything)
+  module.json           # Module metadata
 ```
 
-## The .so is named after the id, not "dsp.so"
+## Key Implementation Details
 
-For `audio_fx`, Schwung's chain host dlopens `<audio_fx>/<id>/<id>.so` and
-**ignores** module.json's `dsp` field. So the CMake target's `OUTPUT_NAME` is
-`tapedelay` and the packaged file is `tapedelay/tapedelay.so`. Only
-`sound_generator` modules use `dsp.so`.
+### Audio FX API
 
-## Legacy state import
+Implements Move Anything audio_fx_api_v1:
+- `on_load`: Initialize delay buffer and DSP state
+- `on_unload`: Cleanup
+- `process_block`: In-place stereo audio processing
+- `set_param`: time, feedback, mix, tone, flutter
+- `get_param`: Returns current parameter values
 
-`tape_echo_plugin.cpp` sniffs an incoming `state` blob: if it does not parse as
-ours it is tried as an old TapeDelay state and mapped (time → the head that can
-reach it, feedback → intensity, tone → treble, division, mix, stereo_width →
-ping-pong width). The old parameter *names* are also accepted individually by
-`set_param`. Neither path keys on the module id, so both keep working now that
-the engine ships under the id the old one used.
+### DSP Components
 
-**Two of those mappings are measured, not reasoned.** Both were wrong in a way
-that only showed up by ear, and the fix in each case was to render an impulse
-through both engines and compare (`tools/README.md` has the how):
+1. **Delay Line**: Circular buffer (~35000 samples for 800ms at 44100Hz)
+2. **Flutter LFO**: ~5Hz sine modulating delay read position
+3. **Tone Filter**: One-pole lowpass (1kHz to 8kHz)
+4. **Soft Saturation**: tanh waveshaping on feedback path
+5. **Mix**: Dry/wet crossfade
 
-- `feedback → intensity` was a flat `v * 0.75`, on the correct observation that
-  this engine sustains past ~0.75 and TapeDelay never did. But this loop also
-  carries record EQ, saturation and head losses, so the same nominal gain
-  decays faster — and proportionally worse the lower you go. The measured ratio
-  runs from **2.0** at feedback 0.1 to **0.72** at 0.95; the flat scale was
-  right at 0.80 and nowhere else. At the old default of 0.4 it asked for 0.30
-  where 0.44 is needed, so **every** imported patch came back a repeat or two
-  short. It is a calibration table now.
-- `mix → echo_volume` did not exist. TapeDelay's Mix was a crossfade, so the
-  wet/dry ratio it produced was `m/(1-m)`; this engine's Mix is a unity-overlap
-  law, so that ratio has to come from Echo Volume or the repeats arrive quiet.
+### Signal Flow
 
-The one-at-a-time key path deliberately does **not** apply the echo-volume
-correction: `mix` is also this engine's own parameter name, so there is no way
-to distinguish an old module replaying its patch from a user turning the knob.
-A whole state blob is unambiguous; a single key is not.
+```
+Input ---+-------------------------------- Dry ----+
+         |                                         |
+         +---> Delay Line ---> Tone Filter --> Wet-+---> Mix ---> Output
+                   ^               |               |
+                   |               v               |
+                   +--- Saturation <-- Feedback <--+
+```
 
-## Build
+### Signal Chain Integration
+
+Module declares `"chainable": true` and `"component_type": "audio_fx"` in module.json.
+
+Installs to: `/data/UserData/move-anything/modules/audio_fx/tapedelay/`
+
+## Build Commands
 
 ```bash
-./scripts/build.sh          # Docker, ubuntu:22.04 (glibc 2.35), aarch64 cross
-./scripts/deploy.sh <host>  # atomic-rename deploy; never scp over a live .so
+./scripts/build.sh      # Build for ARM64 via Docker
+./scripts/install.sh    # Deploy to Move
 ```
-
-`scripts/docker-build.sh` runs three gates before cross-compiling. Two notes on
-the third, both of which have already cost a red build:
-
-- **The pristine core must be staged, not flat-copied.** `TapeEchoDSP.hpp`
-  includes its params header by a path relative to its own directory
-  (`../daf-plugin/TapeEchoParams.hpp`), so `-I` cannot redirect it. Upstream
-  renamed that directory (`dpf-` → `daf-`) in Aug 2026, which is why the script
-  creates both spellings.
-- **`-ffp-contract=off` on both sides is load-bearing.** g++ defaults to
-  `-ffp-contract=fast` for C++, and merely having the ping-pong branch nearby
-  changes which multiply-adds get fused into FMAs. That is a last-bit
-  difference per sample fed into a feedback loop, so 400 blocks later the
-  checksums differ in the 5th digit and the gate reports a divergence that is
-  not in the source. With contraction off the two are identical to every digit.
-  Do not "fix" a red equivalence gate by loosening the comparison.
-
-## Release
-
-Bump `src/module.json` version, commit, `git tag vX.Y.Z && git push --tags`.
-The workflow builds in Docker, attaches `dist/tapedelay-module.tar.gz`, and
-rewrites `release.json` on main. The tag must match module.json or the
-workflow fails the version check.
