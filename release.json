@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
-  "download_url": "https://github.com/charlesvestal/schwung-space-delay/releases/download/v2.0.0/tapedelay-module.tar.gz",
+  "version": "2.0.1",
+  "download_url": "https://github.com/charlesvestal/schwung-space-delay/releases/download/v2.0.1/tapedelay-module.tar.gz",
   "name": "TapeDelay",
   "description": "Tape delay with flutter and tone shaping. Light on CPU.",
   "repo_url": "https://github.com/charlesvestal/schwung-space-delay"
