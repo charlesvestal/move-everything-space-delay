@@ -78,6 +78,7 @@
             },
             {
               "key": "stereo_width",
+              "short_name": "WIDTH",
               "label": "Stereo Width",
               "type": "int",
               "min": 0,
